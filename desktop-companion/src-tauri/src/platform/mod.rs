@@ -100,6 +100,21 @@ pub fn start_capture(target: CaptureTarget) -> Result<StartedCapture> {
     backend().start(target)
 }
 
+/// Compile-time proof that a real native backend was selected.
+///
+/// CI builds with `--features require-native-backend`; if the target ever
+/// resolves to the `Unsupported` stub (or the Windows module is not compiled in
+/// on a Windows target), the build fails here instead of shipping a companion
+/// that cannot capture anything.
+#[cfg(feature = "require-native-backend")]
+const _: () = {
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    compile_error!(
+        "require-native-backend: this target resolves to the Unsupported capture backend. \
+         A real WASAPI (Windows) or ScreenCaptureKit (macOS) backend is mandatory for release builds."
+    );
+};
+
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub struct Unsupported;
 
@@ -115,3 +130,49 @@ impl AudioCaptureBackend for Unsupported {
         anyhow::bail!("Native audio capture is only supported on Windows and macOS.")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// No audio is opened here: this only asserts which backend the compiler
+    /// selected. Real capture is validated manually on a Windows machine.
+    #[test]
+    fn selected_backend_is_native_on_supported_targets() {
+        let name = backend().backend_name();
+        assert_eq!(name, backend_name(), "backend()/backend_name() disagree");
+
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            name, "wasapi",
+            "Windows build resolved to `{name}` instead of the real WASAPI backend"
+        );
+
+        #[cfg(target_os = "macos")]
+        assert_eq!(name, "screencapturekit");
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(name, "unsupported");
+    }
+
+    #[test]
+    fn os_key_matches_target() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(os_key(), "windows");
+        #[cfg(target_os = "macos")]
+        assert_eq!(os_key(), "macos");
+    }
+
+    /// Enumeration must not silently return an empty list on Windows: the
+    /// WASAPI backend always advertises the zoom + system sources.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_backend_advertises_sources() {
+        let sources = enumerate_sources();
+        assert!(
+            sources.iter().any(|s| s.id == "system"),
+            "WASAPI backend did not advertise a system-output source"
+        );
+    }
+}
+

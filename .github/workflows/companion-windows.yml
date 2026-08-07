@@ -1,5 +1,9 @@
 name: Companion Windows Build
 
+# Source validation -> Windows compilation -> bundling -> artifact.
+# CI deliberately does NOT run audio capture: the real acceptance test happens
+# manually on a Windows machine with real system/Zoom output.
+
 on:
   push:
     paths:
@@ -20,14 +24,29 @@ defaults:
   run:
     shell: pwsh
 
+env:
+  # The Rust app lives here; it is also the Tauri project root (tauri.conf.json).
+  CARGO_DIR: desktop-companion/src-tauri
+  RUST_TARGET: x86_64-pc-windows-msvc
+  TAURI_CLI_VERSION: "2.9.1"
+
 jobs:
   windows-build:
     name: Build desktop-companion (Windows / MSVC)
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Locate the companion Cargo manifest
+        run: |
+          $manifest = "${{ env.CARGO_DIR }}/Cargo.toml"
+          $conf = "${{ env.CARGO_DIR }}/tauri.conf.json"
+          if (-not (Test-Path $manifest)) { throw "No Cargo.toml at $manifest" }
+          if (-not (Test-Path $conf)) { throw "No tauri.conf.json at $conf - wrong Tauri project root" }
+          Write-Host "Cargo manifest:     $manifest"
+          Write-Host "Tauri project root: ${{ env.CARGO_DIR }}"
 
       - name: Install Rust (stable MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -35,18 +54,26 @@ jobs:
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
 
+      - name: Ensure the Windows MSVC target is installed
+        run: |
+          rustup target add ${{ env.RUST_TARGET }}
+          Write-Host "== TOOLCHAIN =="
+          rustc --version
+          cargo --version
+          rustup show active-toolchain
+          rustup target list --installed
+
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop-companion/src-tauri -> target
           cache-on-failure: true
 
-      - name: Report toolchain versions
-        working-directory: desktop-companion/src-tauri
+      - name: Install Tauri CLI (locked, Tauri 2)
         run: |
-          rustc -vV
-          cargo -vV
-          cargo tree -p interviewcopilot-companion --depth 1 -e normal || true
+          cargo install tauri-cli --version "${{ env.TAURI_CLI_VERSION }}" --locked
+          Write-Host "== TAURI CLI =="
+          cargo tauri --version
 
       - name: Node dependencies (only if the companion frontend needs them)
         working-directory: desktop-companion
@@ -67,45 +94,126 @@ jobs:
           }
 
       - name: cargo fmt --check
-        working-directory: desktop-companion/src-tauri
+        working-directory: ${{ env.CARGO_DIR }}
         run: cargo fmt --all -- --check
 
-      - name: cargo check
-        working-directory: desktop-companion/src-tauri
-        run: cargo check --all-targets --verbose
-        continue-on-error: false
+      - name: cargo check (real compilation, Windows target)
+        working-directory: ${{ env.CARGO_DIR }}
+        run: >
+          cargo check --all-targets --target ${{ env.RUST_TARGET }}
+          --features require-native-backend,dev-diagnostics --verbose
 
       - name: cargo clippy (non-blocking)
-        working-directory: desktop-companion/src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo clippy --all-targets --target ${{ env.RUST_TARGET }} -- -D warnings
         continue-on-error: true
 
-      - name: Verify the real WASAPI backend compiled (not a stub)
-        working-directory: desktop-companion/src-tauri
+      - name: Print resolved native dependency versions
+        working-directory: ${{ env.CARGO_DIR }}
         run: |
-          cargo tree -p interviewcopilot-companion -i wasapi
-          Select-String -Path src/platform/mod.rs -Pattern 'WasapiBackend'
-          Select-String -Path src/bridge/mod.rs -Pattern '/health','/bridge'
+          Write-Host "== RESOLVED VERSIONS =="
+          cargo tauri --version
+          rustc --version
+          $meta = cargo metadata --format-version 1 --filter-platform ${{ env.RUST_TARGET }} | ConvertFrom-Json
+          foreach ($name in @("tauri", "tauri-build", "wasapi", "rubato", "windows", "axum")) {
+            $pkgs = $meta.packages | Where-Object { $_.name -eq $name }
+            if ($pkgs) { foreach ($p in $pkgs) { Write-Host ("{0,-12} {1}" -f $p.name, $p.version) } }
+            else { Write-Host ("{0,-12} not resolved for this target" -f $name) }
+          }
+          Write-Host ""
+          cargo tree --target ${{ env.RUST_TARGET }} -i wasapi
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+      - name: Prove the Windows/WASAPI backend is compiled in (no audio opened)
+        working-directory: ${{ env.CARGO_DIR }}
+        run: >
+          cargo test --target ${{ env.RUST_TARGET }}
+          --features require-native-backend
+          platform::tests -- --nocapture
+
+      - name: Verify /health and /bridge exist in the bridge module
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          $health = Select-String -Path src/bridge/mod.rs -Pattern '"/health"' -SimpleMatch
+          $bridge = Select-String -Path src/bridge/mod.rs -Pattern '"/bridge"' -SimpleMatch
+          if (-not $health) { throw "/health route missing from bridge module" }
+          if (-not $bridge) { throw "/bridge route missing from bridge module" }
+          Write-Host "bridge routes present: /health and /bridge"
 
       - name: Tauri Windows build
-        working-directory: desktop-companion/src-tauri
-        env:
-          # Development build: no signing certificates required yet.
-          TAURI_SIGNING_PRIVATE_KEY: ""
+        working-directory: ${{ env.CARGO_DIR }}
         run: |
-          $features = ""
-          if ("${{ github.event.inputs.dev_diagnostics }}" -ne "false") { $features = "--features dev-diagnostics" }
-          Write-Host "Building with: $features"
-          cargo tauri build --target x86_64-pc-windows-msvc $features
+          $features = "require-native-backend"
+          if ("${{ github.event.inputs.dev_diagnostics }}" -ne "false") { $features = "$features,dev-diagnostics" }
+          Write-Host "cargo tauri build --target ${{ env.RUST_TARGET }} --features $features"
+          # Tee so the build-script markers can be asserted afterwards.
+          cargo tauri build --target ${{ env.RUST_TARGET }} --features $features --verbose 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/tauri-build.log"
+          if ($LASTEXITCODE -ne 0) { throw "cargo tauri build failed with exit code $LASTEXITCODE" }
 
-      - name: List build output
-        working-directory: desktop-companion/src-tauri
+      - name: Verify build-script markers (features/cfg really reached rustc)
         run: |
-          Get-ChildItem -Recurse target/x86_64-pc-windows-msvc/release -Include *.exe,*.msi |
-            Select-Object FullName,Length | Format-List
+          $log = Get-Content "$env:RUNNER_TEMP/tauri-build.log" -Raw
+          Write-Host "== BUILD SCRIPT MARKERS =="
+          [regex]::Matches($log, 'COMPANION_BUILD [^\r\n]*') | ForEach-Object { Write-Host $_.Value }
+          if ($log -notmatch 'COMPANION_BUILD target_os=windows') { throw "Build did not target Windows" }
+          if ($log -notmatch 'COMPANION_BUILD capture_backend=wasapi') { throw "Build did not select the WASAPI capture backend" }
+          if ("${{ github.event.inputs.dev_diagnostics }}" -ne "false") {
+            if ($log -notmatch 'COMPANION_BUILD feature_dev_diagnostics=enabled') {
+              throw "dev-diagnostics feature did not reach the Rust build"
+            }
+          }
+          if ($log -notmatch 'COMPANION_BUILD feature_require_native_backend=enabled') {
+            throw "require-native-backend feature did not reach the Rust build"
+          }
+          Write-Host "verified: windows target + wasapi backend + requested features reached rustc"
+
+      - name: BUILD OUTPUTS
+        id: outputs
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          # Discover, never hardcode: the target dir may or may not be nested
+          # under the triple depending on how cargo/tauri resolved the build.
+          $roots = @("target/${{ env.RUST_TARGET }}/release", "target/release") |
+            Where-Object { Test-Path $_ }
+          if (-not $roots) { throw "No release output directory found under target/" }
+
+          $exe = @(); $nsis = @(); $msi = @()
+          foreach ($root in $roots) {
+            $exe  += Get-ChildItem -Path $root -Filter *.exe -File -ErrorAction SilentlyContinue
+            $nsis += Get-ChildItem -Path "$root/bundle/nsis" -Filter *.exe -File -Recurse -ErrorAction SilentlyContinue
+            $msi  += Get-ChildItem -Path "$root/bundle/msi" -Filter *.msi -File -Recurse -ErrorAction SilentlyContinue
+          }
+
+          Write-Host ""
+          Write-Host "================ BUILD OUTPUTS ================"
+          if ($exe)  { foreach ($f in $exe)  { Write-Host ("executable:     {0} ({1:N0} bytes)" -f $f.FullName, $f.Length) } }
+          else       { Write-Host "executable:     NOT GENERATED" }
+          if ($nsis) { foreach ($f in $nsis) { Write-Host ("NSIS installer: {0} ({1:N0} bytes)" -f $f.FullName, $f.Length) } }
+          else       { Write-Host "NSIS installer: not generated" }
+          if ($msi)  { foreach ($f in $msi)  { Write-Host ("MSI installer:  {0} ({1:N0} bytes)" -f $f.FullName, $f.Length) } }
+          else       { Write-Host "MSI installer:  not generated (WiX/VBScript tooling on the runner is a known Windows limitation; not required for this milestone)" }
+          Write-Host "==============================================="
+          Write-Host ""
+
+          # The runnable development artifact is the hard requirement.
+          if (-not $exe) { throw "No companion .exe was produced - the milestone artifact is missing." }
+
+          "exe_count=$($exe.Count)"   | Out-File -Append $env:GITHUB_OUTPUT
+          "nsis_count=$($nsis.Count)" | Out-File -Append $env:GITHUB_OUTPUT
+          "msi_count=$($msi.Count)"   | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Job summary
+        if: always()
+        run: |
+          $s = @"
+          ### Companion Windows build
+          - executable(s): ${{ steps.outputs.outputs.exe_count }}
+          - NSIS installer(s): ${{ steps.outputs.outputs.nsis_count }}
+          - MSI installer(s): ${{ steps.outputs.outputs.msi_count }}
+          - backend: WASAPI (asserted at compile time and by build-script marker)
+          - audio capture is NOT exercised in CI; validate manually on real Windows.
+          "@
+          $s | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Upload Windows executable + installers
         uses: actions/upload-artifact@v4
@@ -117,3 +225,6 @@ jobs:
             desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
             desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            desktop-companion/src-tauri/target/release/*.exe
+            desktop-companion/src-tauri/target/release/bundle/nsis/*.exe
+            desktop-companion/src-tauri/target/release/bundle/msi/*.msi

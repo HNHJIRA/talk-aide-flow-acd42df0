@@ -94,14 +94,37 @@ $env:COMPANION_DEV_DIAG = "1"; .\interviewcopilot-companion.exe
 
 ## CI build validation
 
-`.github/workflows/companion-windows.yml` builds **only** `desktop-companion/`
-on a `windows-latest` runner: stable MSVC toolchain, cached cargo/target,
-optional Node install + `tsc --noEmit` (skipped — the companion frontend is
-static), then `cargo fmt --check` → `cargo check` → clippy (non-blocking) →
-a `wasapi`/`/health`/`/bridge` presence check → `cargo tauri build
---target x86_64-pc-windows-msvc --features dev-diagnostics`. The `.exe` and
-NSIS/MSI installers upload as the `interviewcopilot-companion-windows`
-artifact. No release is published and no signing certificate is required.
+`.github/workflows/companion-windows.yml` runs **only** on `desktop-companion/`,
+on `windows-latest`, and does source validation → Windows compilation →
+bundling → artifact. It never opens an audio device.
+
+All cargo commands run from `desktop-companion/src-tauri` (the Cargo manifest
+*and* Tauri project root; the workflow fails fast if either file is missing).
+
+1. stable MSVC toolchain, `rustup target add x86_64-pc-windows-msvc`, prints
+   `rustc --version` / `cargo --version` / `rustup show active-toolchain`
+2. `cargo install tauri-cli --version 2.9.1 --locked`, prints `cargo tauri --version`
+3. `cargo fmt --check` → `cargo check --all-targets --target … --features
+   require-native-backend,dev-diagnostics` → clippy (non-blocking)
+4. resolved versions from `cargo metadata`/`cargo tree`: tauri, tauri-build,
+   wasapi, rubato, windows, axum
+5. **backend proof**: `cargo test platform::tests` asserts the Windows build
+   selected the WASAPI backend, and the `require-native-backend` feature makes
+   the `Unsupported` stub a `compile_error!`. A `wasapi` entry in `Cargo.lock`
+   alone is not accepted as proof.
+6. `cargo tauri build --target x86_64-pc-windows-msvc --features
+   require-native-backend,dev-diagnostics`, then greps the build log for
+   `build.rs` markers (`target_os=windows`, `capture_backend=wasapi`,
+   `feature_dev_diagnostics=enabled`) so an enabled feature is verified at
+   rustc level, not in the command string.
+7. **BUILD OUTPUTS**: discovers the real target dir and prints executable /
+   NSIS installer / MSI installer paths, or `not generated`. A missing MSI (WiX
+   or VBScript tooling on the runner) is reported, not fatal — a missing `.exe`
+   is fatal. Genuine Rust compilation failures are never suppressed.
+
+Artifacts upload as `interviewcopilot-companion-windows`. No release, no
+signing certificate.
+
 
 
 ## Verification status (honest)
