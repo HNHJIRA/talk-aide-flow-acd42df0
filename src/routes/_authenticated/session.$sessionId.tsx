@@ -18,6 +18,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AudioLevelMeter, StatusDot } from "@/components/copilot/StatusIndicators";
+import { CompanionPanel } from "@/components/copilot/CompanionPanel";
+
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
 import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
