@@ -103,8 +103,14 @@ function LiveSession() {
     online,
     elapsed,
     debug,
+    companionHealth,
+    companionState,
     connectMicrophone,
     connectMeetingAudio,
+    refreshCompanion,
+    connectCompanion,
+    startCompanionCapture,
+    stopCompanionCapture,
     startListening,
     pause,
     resume,
@@ -116,8 +122,11 @@ function LiveSession() {
     promoteLastMicSegment,
   } = copilot;
 
+  const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
+  const [forceTabFallback, setForceTabFallback] = useState(false);
   const needsMeetingAudio = session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
+
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
