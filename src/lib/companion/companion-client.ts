@@ -124,10 +124,12 @@ export class CompanionBridge {
 
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
+        if (this.paused) return;
         this.lastAudibleAt = this.lastAudibleAt || Date.now();
         this.handlers.onPcm(event.data);
         return;
       }
+
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(String(event.data)) as Record<string, unknown>;
