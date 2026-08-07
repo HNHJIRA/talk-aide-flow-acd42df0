@@ -98,6 +98,9 @@ fn spawn_worker(state: Shared, started: StartedCapture) {
             let mut level_acc: Vec<f32> = Vec::with_capacity(TARGET_SAMPLE_RATE as usize / 4);
             let mut last_level = Instant::now();
             let mut announced_capturing = false;
+            // Development build mode: a readable heartbeat of the native path.
+            let dev = crate::logging::dev_diagnostics();
+            let mut last_diag = Instant::now();
 
             while !stop.load(Ordering::Relaxed) {
                 let block = match rx.recv_timeout(Duration::from_millis(500)) {
@@ -157,6 +160,21 @@ fn spawn_worker(state: Shared, started: StartedCapture) {
                         serde_json::json!({ "type": "level", "level": level }).to_string(),
                     ));
                     state.evaluate_silence();
+
+                    if dev && last_diag.elapsed() >= Duration::from_secs(2) {
+                        last_diag = Instant::now();
+                        tracing::info!(
+                            level = format!("{:.3}", level),
+                            packets = state.counters.packets_sent.load(Ordering::Relaxed),
+                            bytes = state.counters.bytes_sent.load(Ordering::Relaxed),
+                            frames = state.counters.frames_captured.load(Ordering::Relaxed),
+                            drops = state.counters.buffer_drops.load(Ordering::Relaxed),
+                            native_rate,
+                            native_channels = channels,
+                            paused = paused.load(Ordering::Relaxed),
+                            "native audio heartbeat"
+                        );
+                    }
                 }
             }
 
