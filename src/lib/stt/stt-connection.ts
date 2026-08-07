@@ -11,7 +11,7 @@ export type SttResult = {
 };
 
 type Options = {
-  getToken: () => Promise<{ key: string; expiresAt: string }>;
+  getToken: () => Promise<{ key: string; expiresAt: string; mode?: string }>;
   language?: string;
   onResult: (result: SttResult) => void;
   onState: (state: SttState, detail?: string) => void;
@@ -49,7 +49,7 @@ export class SttConnection {
   private async connect() {
     if (this.closedByUser) return;
     this.setState(this.attempts === 0 ? "connecting" : "reconnecting");
-    let token: { key: string };
+    let token: { key: string; mode?: string };
     try {
       token = await this.opts.getToken();
     } catch (error) {
@@ -71,14 +71,17 @@ export class SttConnection {
       language: this.opts.language ?? "en",
     });
 
+    // A /v1/auth/grant access token authenticates with the "bearer" subprotocol;
+    // a raw API key would use "token". We only ever receive the short-lived grant token.
     const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, [
-      "token",
+      token.mode === "grant" ? "bearer" : "token",
       token.key,
     ]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     ws.onopen = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
       this.attempts = 0;
       this.setState("active");
       this.keepAlive = setInterval(() => {

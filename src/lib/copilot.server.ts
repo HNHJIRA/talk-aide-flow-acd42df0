@@ -8,13 +8,12 @@ export function serviceClient() {
   });
 }
 
-type DeepgramAuthMode = "grant" | "temp_key";
+export type DeepgramAuthMode = "grant";
 
 export type DeepgramDiagnostics = {
   configured: boolean;
   scopes: string[];
   canGrant: boolean;
-  canMintTempKey: boolean;
   mode: DeepgramAuthMode | null;
   problem: string | null;
 };
@@ -24,9 +23,9 @@ function dgHeaders(apiKey: string) {
 }
 
 /**
- * Short-lived browser credential for Deepgram. The long-lived DEEPGRAM_API_KEY
- * never leaves the server: we exchange it for a 5-minute token.
- * Preferred: /v1/auth/grant. Fallback: a TTL-limited project key (needs keys:write).
+ * Short-lived browser credential for Deepgram, minted with POST /v1/auth/grant —
+ * the least-privileged path (no keys:write, no temporary project keys created).
+ * The long-lived DEEPGRAM_API_KEY never leaves the server.
  */
 export async function mintDeepgramKey(): Promise<{ key: string; expiresAt: string; mode: DeepgramAuthMode }> {
   const apiKey = process.env["DEEPGRAM_API_KEY"];
@@ -35,59 +34,29 @@ export async function mintDeepgramKey(): Promise<{ key: string; expiresAt: strin
       "Live transcription is not configured yet. Add a Deepgram API key to enable real-time transcription.",
     );
   }
-  const headers = dgHeaders(apiKey);
 
-  const grantRes = await fetch("https://api.deepgram.com/v1/auth/grant", {
+  const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
     method: "POST",
-    headers,
+    headers: dgHeaders(apiKey),
     body: JSON.stringify({ ttl_seconds: 300 }),
   });
-  if (grantRes.ok) {
-    const grant = (await grantRes.json()) as { access_token: string; expires_in?: number };
+
+  if (res.ok) {
+    const grant = (await res.json()) as { access_token: string; expires_in?: number };
     return {
       key: grant.access_token,
       expiresAt: new Date(Date.now() + (grant.expires_in ?? 300) * 1000).toISOString(),
       mode: "grant",
     };
   }
-  const grantDetail = await grantRes.text().catch(() => "");
 
-  const projectsRes = await fetch("https://api.deepgram.com/v1/projects", { headers });
-  if (!projectsRes.ok) {
+  if (res.status === 401 || res.status === 403) {
     throw new Error(
-      `Deepgram rejected this API key (${projectsRes.status}). Create a new key and save it again.`,
+      "Deepgram refused to mint a temporary token for this API key (403 Insufficient permissions). The key currently carries only the 'account:write' scope. In the Deepgram console delete it and create a new API key using the built-in 'Member' role (not a custom scope selection) — Member is enough for /v1/auth/grant.",
     );
   }
-  const projects = (await projectsRes.json()) as { projects?: { project_id: string }[] };
-  const projectId = projects.projects?.[0]?.project_id;
-  if (!projectId) throw new Error("No Deepgram project is available for this API key.");
-
-  const keyRes = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/keys`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      comment: "InterviewCopilot session key",
-      scopes: ["usage:write"],
-      time_to_live_in_seconds: 300,
-    }),
-  });
-  if (keyRes.ok) {
-    const created = (await keyRes.json()) as { key: string };
-    return {
-      key: created.key,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      mode: "temp_key",
-    };
-  }
-
-  if (keyRes.status === 401 || keyRes.status === 403) {
-    throw new Error(
-      "Your Deepgram key cannot create short-lived session tokens. In the Deepgram console create a new API key with the 'Owner' or 'Admin' role (it needs the keys:write scope, or auth grant access), then save it here again.",
-    );
-  }
-  throw new Error(
-    `Could not create a temporary transcription key (grant ${grantRes.status}, key ${keyRes.status}). ${grantDetail.slice(0, 120)}`,
-  );
+  const detail = await res.text().catch(() => "");
+  throw new Error(`Deepgram /v1/auth/grant failed (${res.status}). ${detail.slice(0, 160)}`);
 }
 
 /** Honest, non-faked report of what the configured Deepgram key can actually do. */
@@ -98,7 +67,7 @@ export async function deepgramDiagnostics(): Promise<DeepgramDiagnostics> {
       configured: false,
       scopes: [],
       canGrant: false,
-      canMintTempKey: false,
+      
       mode: null,
       problem: "No Deepgram API key is configured.",
     };
@@ -122,7 +91,6 @@ export async function deepgramDiagnostics(): Promise<DeepgramDiagnostics> {
     configured: true,
     scopes,
     canGrant: mode === "grant",
-    canMintTempKey: mode === "temp_key",
     mode,
     problem,
   };
