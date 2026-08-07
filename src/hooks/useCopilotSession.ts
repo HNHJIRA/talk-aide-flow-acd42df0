@@ -705,7 +705,8 @@ export function useCopilotSession(opts: Options) {
 
   const startListening = useCallback(async () => {
     if (micPcm.current && !micStt.current) startStt("microphone");
-    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting");
+    if ((meetingPcm.current || companionRef.current?.isCapturing()) && !remoteStt_.current)
+      startStt(remoteSourceRef.current);
     startedAt.current = Date.now();
     liveRef.current = true;
     setSessionState("listening");
@@ -720,12 +721,14 @@ export function useCopilotSession(opts: Options) {
     // never opens a duplicate connection or replays buffered audio.
     micPcm.current?.setPaused(true);
     meetingPcm.current?.setPaused(true);
+    companionRef.current?.setPaused(true);
     setSessionState("paused");
   }, []);
 
   const resume = useCallback(() => {
     micPcm.current?.setPaused(false);
     meetingPcm.current?.setPaused(false);
+    companionRef.current?.setPaused(false);
     setSessionState("listening");
   }, []);
 
@@ -741,6 +744,10 @@ export function useCopilotSession(opts: Options) {
     meetingPcm.current?.stop();
     micPcm.current = null;
     meetingPcm.current = null;
+    companionRef.current?.disconnect();
+    companionRef.current = null;
+    setCompanionState("disconnected");
+    setCompanionLevel(0);
     stopStream(micStream.current);
     stopStream(meetingStream.current);
     micStream.current = null;
@@ -748,6 +755,7 @@ export function useCopilotSession(opts: Options) {
     setMicStatus("disconnected");
     setMeetingStatus("disconnected");
   }, []);
+
 
   const endSession = useCallback(async () => {
     setSessionState("ending");
