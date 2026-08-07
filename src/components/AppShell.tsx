@@ -1,6 +1,8 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { LayoutDashboard, FileText, History, Settings, LogOut, Radio } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { LayoutDashboard, FileText, History, Settings, LogOut, Radio, PackageOpen } from "lucide-react";
+import { getIsReleaseAdmin } from "@/lib/releases.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,6 +16,11 @@ const NAV = [
 
 export function AppShell({ children, title }: { children: ReactNode; title?: string }) {
   const navigate = useNavigate();
+  const { data: admin } = useQuery({
+    queryKey: ["is-release-admin"],
+    queryFn: () => getIsReleaseAdmin({ data: undefined }),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -40,6 +47,16 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
               {item.label}
             </Link>
           ))}
+          {admin?.isAdmin ? (
+            <Link
+              to="/admin/desktop-releases"
+              activeProps={{ className: "bg-sidebar-accent text-sidebar-accent-foreground" }}
+              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+            >
+              <PackageOpen className="size-4" />
+              Desktop releases
+            </Link>
+          ) : null}
         </nav>
         <Button asChild size="sm" className="mb-3">
           <Link to="/new-session">
