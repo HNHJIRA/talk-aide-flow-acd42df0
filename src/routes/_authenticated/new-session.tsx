@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MacDownloadButton } from "@/components/download/MacDownloadButton";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { cn } from "@/lib/utils";
 
@@ -127,6 +128,9 @@ function NewSession() {
               loopback on Windows, ScreenCaptureKit on macOS) and streams it to this session after you pair it. You can
               pair it in the live room — if it isn't installed, the room falls back to browser tab-audio sharing.
             </p>
+            <div className="mt-3">
+              <MacDownloadButton size="sm" />
+            </div>
           </div>
         ) : null}
 

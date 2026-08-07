@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Mic, Radio, Sparkles, ShieldCheck, FileText, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MacDownloadButton } from "@/components/download/MacDownloadButton";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -103,7 +104,7 @@ function Landing() {
         </p>
       </section>
 
-      <section className="mx-auto grid max-w-6xl gap-4 px-6 pb-24 md:grid-cols-3">
+      <section className="mx-auto grid max-w-6xl gap-4 px-6 pb-16 md:grid-cols-3">
         {FEATURES.map((feature) => (
           <article key={feature.title} className="panel p-6">
             <feature.icon className="mb-4 size-5 text-primary" />
@@ -113,8 +114,23 @@ function Landing() {
         ))}
       </section>
 
+      <section className="mx-auto max-w-6xl px-6 pb-24">
+        <div className="panel flex flex-wrap items-center justify-between gap-6 p-6">
+          <div>
+            <h2 className="text-base font-semibold">InterviewCopilot Desktop Companion</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Use Zoom Desktop with InterviewCopilot. Apple Silicon · macOS 13+
+            </p>
+          </div>
+          <MacDownloadButton />
+        </div>
+      </section>
+
       <footer className="border-t border-border px-6 py-8 text-center text-xs text-muted-foreground">
-        InterviewCopilot — use it where AI assistance is allowed.
+        InterviewCopilot — use it where AI assistance is allowed. ·{" "}
+        <Link to="/download" className="underline hover:text-foreground">
+          Download companion
+        </Link>
       </footer>
     </main>
   );
