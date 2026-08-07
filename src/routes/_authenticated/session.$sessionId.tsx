@@ -190,29 +190,46 @@ function LiveSession() {
               Audio sources
             </h2>
             <div className="grid gap-3">
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <MonitorSpeaker className="size-4 text-primary" /> Meeting tab
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {meetingStatus === "active"
-                      ? "Receiving audio from the shared tab"
-                      : "Share the meeting tab and tick “Also share tab audio”"}
-                  </p>
+              {isZoomDesktop ? (
+                <CompanionPanel
+                  sessionId={sessionId}
+                  health={companionHealth}
+                  state={companionState}
+                  level={meetingLevel}
+                  onRefresh={refreshCompanion}
+                  onConnect={(token) => connectCompanion(token, "zoom")}
+                  onStartCapture={startCompanionCapture}
+                  onStopCapture={stopCompanionCapture}
+                  onFallback={() => setForceTabFallback(true)}
+                />
+              ) : null}
+
+              {!isZoomDesktop || forceTabFallback ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      <MonitorSpeaker className="size-4 text-primary" /> Meeting tab
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {meetingStatus === "active"
+                        ? "Receiving audio from the shared tab"
+                        : "Share the meeting tab and tick “Also share tab audio”"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <AudioLevelMeter level={meetingLevel} label="Meeting" />
+                    <Button
+                      size="sm"
+                      variant={meetingStatus === "active" ? "outline" : "default"}
+                      onClick={() => void connectMeetingAudio()}
+                      disabled={!caps.hasGetDisplayMedia}
+                    >
+                      {meetingStatus === "active" ? "Reconnect" : "Connect"}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <AudioLevelMeter level={meetingLevel} label="Meeting" />
-                  <Button
-                    size="sm"
-                    variant={meetingStatus === "active" ? "outline" : "default"}
-                    onClick={() => void connectMeetingAudio()}
-                    disabled={!caps.hasGetDisplayMedia}
-                  >
-                    {meetingStatus === "active" ? "Reconnect" : "Connect"}
-                  </Button>
-                </div>
-              </div>
+              ) : null}
+
 
               <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
                 <div className="min-w-0">
