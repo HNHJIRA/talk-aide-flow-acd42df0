@@ -127,13 +127,36 @@ signing certificate.
 
 
 
+## macOS (ScreenCaptureKit)
+
+`platform/macos.rs` is a real implementation:
+
+- `SCShareableContent` finds Zoom by bundle id (`us.zoom.xos`, any `us.zoom.*`,
+  or an app named `Zoom…`). With `target: "zoom"` the content filter includes
+  only Zoom's application audio (`captureTarget: "zoom_application_audio"`);
+  if Zoom is not running it falls back to whole-display audio and reports
+  `zoom_not_detected` rather than claiming Zoom-only capture.
+- `SCStreamConfiguration`: `capturesAudio = true`,
+  `excludesCurrentProcessAudio = true`, 48 kHz / 2 ch, with a 2×2 @ 1 fps video
+  plane because SCK requires one.
+- The audio callback mixes SCK's float PCM (planar or interleaved) to mono and
+  `try_send`s into a bounded channel — no allocation-heavy work and no blocking
+  on the CoreMedia thread; drops surface as `audioBufferDrops`. The shared
+  worker resamples 48 kHz → 16 kHz linear16 exactly as on Windows.
+- One owner thread creates, starts, and stops the `SCStream`, so the ObjC object
+  never outlives the capture; `stop_capture()` is awaited before the stream drops.
+- Permission: `Info.plist` ships `NSScreenCaptureUsageDescription`. Without
+  *Screen & System Audio Recording* macOS fails the start and the companion
+  returns an explicit message pointing at System Settings — never silent success.
+
+Build: `cd desktop-companion/src-tauri && cargo tauri build --features require-native-backend`
+(macOS 13+, Apple Silicon or Intel). CI: `.github/workflows/companion-macos.yml`.
+
 ## Verification status (honest)
 
 - Windows and macOS code is written but **has not been compiled or run here** —
   this sandbox has no Rust toolchain and no Windows/macOS audio stack. Nothing
   is claimed as validated, and no installer is distributable yet.
-- macOS native capture is **not implemented**; `start` returns an explicit error
-  so the web app falls back to browser tab audio rather than faking success.
 - Windows Zoom **per-process** capture is not implemented yet: with
   `target: "zoom"` the companion captures system output loopback and reports
   `captureMethod: "WASAPI SYSTEM LOOPBACK"` — it never labels itself Zoom-only.
