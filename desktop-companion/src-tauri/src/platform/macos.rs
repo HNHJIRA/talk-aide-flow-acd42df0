@@ -382,10 +382,13 @@ fn build_stream(
         .with_queue_depth(6);
 
     let mut stream = SCStream::new(&filter, &config);
-    stream.add_output_handler(
+    let handler = stream.add_output_handler(
         AudioTap { tx: frames_tx, dropped },
         SCStreamOutputType::Audio,
     );
+    if handler.is_none() {
+        bail!("macOS rejected the ScreenCaptureKit audio output handler.");
+    }
 
     Ok((stream, probe))
 }
