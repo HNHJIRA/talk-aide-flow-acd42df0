@@ -122,6 +122,7 @@ export function useCopilotSession(opts: Options) {
   const recentQuestions = useRef<{ norm: string; at: number }[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const counts = useRef({ remote: 0, local: 0 });
+  const liveRef = useRef(false);
   const lastConfidence = useRef<number | null>(null);
   const [diag, setDiag] = useState({
     lastTranscriptSource: "none",
@@ -420,7 +421,7 @@ export function useCopilotSession(opts: Options) {
   );
 
   const startStt = useCallback(
-    (source: SourceKind, pcm: PcmSource) => {
+    (source: SourceKind) => {
       const speaker = source === "remote_meeting" ? "interviewer" : "candidate";
       const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
@@ -439,6 +440,11 @@ export function useCopilotSession(opts: Options) {
     },
     [handleResult, pushError],
   );
+
+  // Stable indirection so connect handlers defined above can open an STT socket
+  // when a source is attached after the session is already live.
+  const startSttRef = useRef<((source: SourceKind) => void) | null>(null);
+  startSttRef.current = startStt;
 
   /* ---------------- connect sources ---------------- */
 
@@ -533,9 +539,10 @@ export function useCopilotSession(opts: Options) {
   /* ---------------- lifecycle ---------------- */
 
   const startListening = useCallback(async () => {
-    if (micPcm.current && !micStt.current) startStt("microphone", micPcm.current);
-    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting", meetingPcm.current);
+    if (micPcm.current && !micStt.current) startStt("microphone");
+    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting");
     startedAt.current = Date.now();
+    liveRef.current = true;
     setSessionState("listening");
     await supabase
       .from("interview_sessions")
@@ -544,6 +551,8 @@ export function useCopilotSession(opts: Options) {
   }, [startStt, sessionId]);
 
   const pause = useCallback(() => {
+    // Only gates PCM delivery: the two Deepgram sockets stay open, so resuming
+    // never opens a duplicate connection or replays buffered audio.
     micPcm.current?.setPaused(true);
     meetingPcm.current?.setPaused(true);
     setSessionState("paused");
@@ -556,6 +565,7 @@ export function useCopilotSession(opts: Options) {
   }, []);
 
   const teardown = useCallback(() => {
+    liveRef.current = false;
     abortRef.current?.abort();
     if (detectTimer.current) clearTimeout(detectTimer.current);
     micStt.current?.stop();
