@@ -45,4 +45,8 @@ custom-protocol = ["tauri/custom-protocol"]
 # Development build mode: verbose, human-readable native diagnostics
 # (target/file/line/thread console logs + 2s native audio heartbeat).
 dev-diagnostics = []
+# Compile-time guarantee that a real native capture backend was selected
+# (WASAPI on Windows, ScreenCaptureKit on macOS) - never the Unsupported stub.
+require-native-backend = []
+
 
