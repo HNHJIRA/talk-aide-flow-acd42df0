@@ -854,7 +854,7 @@ export function useCopilotSession(opts: Options) {
       meetingTrackLabel: diag.meetingTrackLabel,
       meetingTracksReturned: diag.meetingTracksReturned,
       micLevel,
-      meetingLevel,
+      meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
       remoteStt,
       localStt,
       remoteCount: counts.current.remote,
@@ -873,13 +873,50 @@ export function useCopilotSession(opts: Options) {
             : "CANDIDATE (ME)",
       detectionSources:
         opts.micMode === "test"
-          ? "microphone (test mode) + meeting"
+          ? "microphone (test mode) + interviewer stream"
           : opts.micMode === "fallback" && opts.fallbackAutoDetect
-            ? "microphone (fallback auto-detect) + meeting"
-            : "meeting/interviewer only",
+            ? "microphone (fallback auto-detect) + interviewer stream"
+            : "interviewer stream only (meeting tab / Zoom Desktop)",
+      companionState,
+      companionVersion: companionHealth?.version ?? "not detected",
+      companionOs: companionHealth?.os ?? "unknown",
+      companionBackend: companionHealth?.captureBackend ?? "unknown",
+      remoteCaptureMethod:
+        remoteSourceRef.current === "zoom_desktop"
+          ? (companionFormat?.captureMethod ?? "companion (pending)")
+          : "browser getDisplayMedia (tab audio)",
+      remoteSourceDetected:
+        remoteSourceRef.current === "zoom_desktop"
+          ? companionFormat
+            ? companionFormat.sourceDetected
+              ? `yes — ${companionFormat.captureTarget}`
+              : "no source detected"
+            : "unknown"
+          : meetingStatus === "active"
+            ? "yes — shared tab"
+            : "no",
+      remoteSampleRate: String(companionFormat?.sampleRate ?? COMPANION_SAMPLE_RATE),
+      remoteChannels: String(companionFormat?.channels ?? 1),
+      processedSampleRate: `${COMPANION_SAMPLE_RATE} Hz mono linear16`,
+      echoSuppressed: counts.current.echo,
+      lastCaptureError: diag.lastCaptureError,
       errors,
     }),
-    [micLevel, meetingLevel, remoteStt, localStt, errors, diag, opts.micMode, opts.fallbackAutoDetect],
+    [
+      micLevel,
+      meetingLevel,
+      companionLevel,
+      remoteStt,
+      localStt,
+      errors,
+      diag,
+      opts.micMode,
+      opts.fallbackAutoDetect,
+      companionState,
+      companionHealth,
+      companionFormat,
+      meetingStatus,
+    ],
   );
 
   return {
@@ -888,7 +925,7 @@ export function useCopilotSession(opts: Options) {
     meetingStatus,
     micDeviceLabel,
     micLevel,
-    meetingLevel,
+    meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
     localStt,
     remoteStt,
     segments,
@@ -898,8 +935,14 @@ export function useCopilotSession(opts: Options) {
     online,
     elapsed,
     debug,
+    companionHealth,
+    companionState,
     connectMicrophone,
     connectMeetingAudio,
+    refreshCompanion,
+    connectCompanion,
+    startCompanionCapture,
+    stopCompanionCapture,
     startListening,
     pause,
     resume,
@@ -911,3 +954,4 @@ export function useCopilotSession(opts: Options) {
     promoteLastMicSegment,
   };
 }
+
