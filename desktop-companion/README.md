@@ -77,6 +77,33 @@ cargo tauri dev
 cargo tauri build          # -> target\release\bundle\nsis\*.exe and msi\*.msi
 ```
 
+## Development build mode (readable native diagnostics)
+
+Enabled by any of: a debug build, `--features dev-diagnostics`, or
+`COMPANION_DEV_DIAG=1`. It turns on a wide human-readable console layer
+(target, file:line, thread), raises the default filter to
+`interviewcopilot_companion=trace`, prints a startup banner with OS /
+capture backend / profile, and logs a **native audio heartbeat** every 2 s with
+level, packets, bytes, frames, buffer drops, native rate/channels and pause
+state. `COMPANION_LOG` still overrides the filter. Nothing sensitive is logged.
+
+```powershell
+cargo tauri build --features dev-diagnostics
+$env:COMPANION_DEV_DIAG = "1"; .\interviewcopilot-companion.exe
+```
+
+## CI build validation
+
+`.github/workflows/companion-windows.yml` builds **only** `desktop-companion/`
+on a `windows-latest` runner: stable MSVC toolchain, cached cargo/target,
+optional Node install + `tsc --noEmit` (skipped — the companion frontend is
+static), then `cargo fmt --check` → `cargo check` → clippy (non-blocking) →
+a `wasapi`/`/health`/`/bridge` presence check → `cargo tauri build
+--target x86_64-pc-windows-msvc --features dev-diagnostics`. The `.exe` and
+NSIS/MSI installers upload as the `interviewcopilot-companion-windows`
+artifact. No release is published and no signing certificate is required.
+
+
 ## Verification status (honest)
 
 - Windows and macOS code is written but **has not been compiled or run here** —
