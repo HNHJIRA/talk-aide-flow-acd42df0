@@ -1,0 +1,174 @@
+name: Companion macOS Build
+
+# Source validation -> macOS compilation (ScreenCaptureKit) -> bundling -> artifact.
+# CI never opens real audio: system-audio capture requires the Screen & System
+# Audio Recording permission, which only a human can grant on a real Mac.
+
+on:
+  push:
+    paths:
+      - "desktop-companion/**"
+      - ".github/workflows/companion-macos.yml"
+  pull_request:
+    paths:
+      - "desktop-companion/**"
+      - ".github/workflows/companion-macos.yml"
+  workflow_dispatch:
+    inputs:
+      dev_diagnostics:
+        description: "Build with the dev-diagnostics feature (verbose native logging)"
+        type: boolean
+        default: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_DIR: desktop-companion/src-tauri
+  RUST_TARGET: aarch64-apple-darwin
+  TAURI_CLI_VERSION: "2.9.1"
+
+jobs:
+  macos-build:
+    name: Build desktop-companion (macOS / Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate the companion Cargo manifest
+        run: |
+          test -f "$CARGO_DIR/Cargo.toml" || { echo "No Cargo.toml at $CARGO_DIR"; exit 1; }
+          test -f "$CARGO_DIR/tauri.conf.json" || { echo "No tauri.conf.json - wrong Tauri project root"; exit 1; }
+          test -f "$CARGO_DIR/Info.plist" || { echo "Info.plist missing - ScreenCaptureKit permission strings would not ship"; exit 1; }
+          echo "macOS SDK: $(xcrun --show-sdk-version)  Xcode: $(xcodebuild -version | head -1)"
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+          components: rustfmt, clippy
+
+      - name: Toolchain info
+        run: |
+          rustup target add "$RUST_TARGET"
+          rustc --version
+          cargo --version
+          rustup show active-toolchain
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-companion/src-tauri -> target
+          cache-on-failure: true
+
+      - name: Install Tauri CLI (locked, Tauri 2)
+        run: |
+          cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked
+          cargo tauri --version
+
+      - name: cargo fmt --check
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo fmt --all -- --check
+
+      - name: cargo check (real compilation, macOS target)
+        working-directory: ${{ env.CARGO_DIR }}
+        run: >
+          cargo check --all-targets --target "$RUST_TARGET"
+          --features require-native-backend,dev-diagnostics --verbose
+
+      - name: cargo clippy (non-blocking)
+        working-directory: ${{ env.CARGO_DIR }}
+        run: cargo clippy --all-targets --target "$RUST_TARGET" -- -D warnings
+        continue-on-error: true
+
+      - name: Print resolved native dependency versions
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          echo "== RESOLVED VERSIONS =="
+          cargo metadata --format-version 1 --filter-platform "$RUST_TARGET" \
+            | python3 -c "import json,sys; m=json.load(sys.stdin); [print(f\"{p['name']:<20} {p['version']}\") for p in m['packages'] if p['name'] in ('tauri','tauri-build','screencapturekit','apple-cf','rubato','axum')]"
+          cargo tree --target "$RUST_TARGET" -i screencapturekit
+
+      - name: Prove the ScreenCaptureKit backend is compiled in (no audio opened)
+        working-directory: ${{ env.CARGO_DIR }}
+        run: >
+          cargo test --target "$RUST_TARGET"
+          --features require-native-backend
+          platform:: -- --nocapture
+
+      - name: Verify /health and /bridge exist in the bridge module
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          grep -q '"/health"' src/bridge/mod.rs || { echo "/health route missing"; exit 1; }
+          grep -q '"/bridge"' src/bridge/mod.rs || { echo "/bridge route missing"; exit 1; }
+          echo "bridge routes present: /health and /bridge"
+
+      - name: Tauri macOS build
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          features="require-native-backend"
+          if [ "${{ github.event.inputs.dev_diagnostics }}" != "false" ]; then
+            features="$features,dev-diagnostics"
+          fi
+          echo "cargo tauri build --target $RUST_TARGET --features $features"
+          set -o pipefail
+          cargo tauri build --target "$RUST_TARGET" --features "$features" --verbose 2>&1 \
+            | tee "$RUNNER_TEMP/tauri-build.log"
+
+      - name: Verify build-script markers (features/cfg really reached rustc)
+        run: |
+          log="$RUNNER_TEMP/tauri-build.log"
+          echo "== BUILD SCRIPT MARKERS =="
+          grep -o 'COMPANION_BUILD [^\r]*' "$log" | sort -u || true
+          grep -q 'COMPANION_BUILD target_os=macos' "$log" || { echo "Build did not target macOS"; exit 1; }
+          grep -q 'COMPANION_BUILD capture_backend=screencapturekit' "$log" || { echo "ScreenCaptureKit backend was not selected"; exit 1; }
+          grep -q 'COMPANION_BUILD feature_require_native_backend=enabled' "$log" || { echo "require-native-backend did not reach rustc"; exit 1; }
+          echo "verified: macos target + screencapturekit backend reached rustc"
+
+      - name: Verify the bundle ships the screen-recording permission strings
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          app=$(find target -name "*.app" -maxdepth 5 -type d | head -1)
+          test -n "$app" || { echo "No .app bundle produced"; exit 1; }
+          plist="$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :NSScreenCaptureUsageDescription" "$plist" \
+            || { echo "NSScreenCaptureUsageDescription missing from the bundle"; exit 1; }
+          echo "bundle: $app"
+
+      - name: BUILD OUTPUTS
+        id: outputs
+        working-directory: ${{ env.CARGO_DIR }}
+        run: |
+          echo "================ BUILD OUTPUTS ================"
+          find target -maxdepth 6 \( -name "*.app" -o -name "*.dmg" \) -print0 \
+            | xargs -0 -I{} sh -c 'echo "artifact: {} ($(du -sh "{}" | cut -f1))"'
+          echo "==============================================="
+          apps=$(find target -maxdepth 6 -name "*.app" -type d | wc -l | tr -d ' ')
+          dmgs=$(find target -maxdepth 6 -name "*.dmg" -type f | wc -l | tr -d ' ')
+          test "$apps" -gt 0 || { echo "No .app produced - milestone artifact missing"; exit 1; }
+          echo "app_count=$apps" >> "$GITHUB_OUTPUT"
+          echo "dmg_count=$dmgs" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Companion macOS build"
+            echo "- app bundle(s): ${{ steps.outputs.outputs.app_count }}"
+            echo "- dmg(s): ${{ steps.outputs.outputs.dmg_count }}"
+            echo "- backend: ScreenCaptureKit (asserted at compile time and by build-script marker)"
+            echo "- audio capture is NOT exercised in CI; validate manually on a real Mac with Zoom running."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload macOS app + dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: interviewcopilot-companion-macos
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop-companion/src-tauri/target/**/release/bundle/macos/*.app
+            desktop-companion/src-tauri/target/**/release/bundle/dmg/*.dmg
