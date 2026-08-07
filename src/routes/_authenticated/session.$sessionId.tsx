@@ -51,6 +51,8 @@ function LiveSession() {
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
   const [showDebug, setShowDebug] = useState(false);
+  const [sttTestMode, setSttTestMode] = useState(false);
+  const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const caps = detectCapabilities();
 
@@ -73,12 +75,17 @@ function LiveSession() {
     staleTime: 60_000,
   });
 
+  const isManualPlatform = session?.meeting_platform === "manual" || session?.meeting_platform === "practice";
+  const micOnlyFallback = isManualPlatform;
+
   const copilot = useCopilotSession({
     sessionId,
     language: session?.answer_language ?? "en",
     autoDetect: true,
     autoGenerate: true,
     confidenceThreshold: 0.6,
+    micMode: sttTestMode ? "test" : micOnlyFallback ? "fallback" : "candidate",
+    fallbackAutoDetect,
     micConstraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
 
@@ -106,6 +113,7 @@ function LiveSession() {
     regenerate,
     togglePin,
     manualQuestion,
+    promoteLastMicSegment,
   } = copilot;
 
   const needsMeetingAudio = session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
@@ -219,6 +227,46 @@ function LiveSession() {
               </div>
             </div>
 
+            <div className="mt-4 rounded-lg border border-border p-3">
+              <label className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="text-sm font-medium">STT Test Mode</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {sttTestMode
+                      ? "Microphone is labelled TEST AUDIO and may trigger question detection + AI answers. For validating the pipeline only."
+                      : "Off — production behaviour: your microphone is CANDIDATE and can never auto-trigger interviewer answers."}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  className="mt-1 size-4 accent-[var(--color-primary)]"
+                  checked={sttTestMode}
+                  onChange={(e) => setSttTestMode(e.target.checked)}
+                />
+              </label>
+            </div>
+
+            {!sttTestMode && micOnlyFallback ? (
+              <div className="mt-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+                Microphone-only fallback: speaker attribution may be inaccurate — every utterance comes from one
+                device, so the app will not assume it is the interviewer.
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-foreground">
+                  <Button size="sm" variant="outline" onClick={() => void promoteLastMicSegment()}>
+                    Treat last transcript as interviewer question
+                  </Button>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--color-primary)]"
+                      checked={fallbackAutoDetect}
+                      onChange={(e) => setFallbackAutoDetect(e.target.checked)}
+                    />
+                    <span>Single-source auto-detection</span>
+                  </label>
+                </div>
+              </div>
+            ) : null}
+
             {needsMeetingAudio && meetingStatus !== "active" ? (
               <p className="mt-3 text-xs text-warning">
                 Without meeting audio only your own speech is transcribed — questions won't be detected.
@@ -254,6 +302,9 @@ function LiveSession() {
                   ["Deepgram (microphone)", debug.localStt],
                   ["Deepgram (meeting)", debug.remoteStt],
                   ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
+                  ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
+                  ["Microphone role", debug.micRole],
+                  ["Detection sources", debug.detectionSources],
                   ["Current transcript source", debug.lastTranscriptSource],
                   ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
                   ["Last detected question", debug.lastQuestion || "—"],
@@ -283,10 +334,18 @@ function LiveSession() {
                   <span
                     className={cn(
                       "mr-2 text-[11px] font-semibold uppercase tracking-wide",
-                      segment.speaker === "interviewer" ? "text-primary" : "text-accent",
+                      segment.speaker === "interviewer"
+                        ? "text-primary"
+                        : segment.speaker === "test"
+                          ? "text-warning"
+                          : "text-accent",
                     )}
                   >
-                    {segment.speaker === "interviewer" ? "Interviewer" : "You"}
+                    {segment.speaker === "interviewer"
+                      ? "Interviewer"
+                      : segment.speaker === "test"
+                        ? "Test audio"
+                        : "You"}
                   </span>
                   <span className="text-foreground/90">{segment.text}</span>
                 </p>
