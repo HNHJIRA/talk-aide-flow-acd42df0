@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InterviewCopilot Companion</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>InterviewCopilot Companion</h1>
+        <p class="sub" id="version">v0.1.0</p>
+      </header>
+
+      <section class="card">
+        <div class="row">
+          <span class="label">Status</span>
+          <span class="value" id="status">Waiting for InterviewCopilot</span>
+        </div>
+        <div class="row">
+          <span class="label">Session</span>
+          <span class="value" id="session">Not paired</span>
+        </div>
+        <div class="row">
+          <span class="label">Capture</span>
+          <span class="value"><span class="dot" id="dot"></span><span id="capture">Stopped</span></span>
+        </div>
+        <div class="meter"><div class="meter-fill" id="meter"></div></div>
+        <p class="recording" id="recording" hidden>● AUDIO CAPTURE ACTIVE</p>
+      </section>
+
+      <section class="card" id="pair-card">
+        <label class="label" for="code">Pairing code from InterviewCopilot</label>
+        <div class="pair-row">
+          <input id="code" maxlength="8" placeholder="ABC-234" autocomplete="off" />
+          <button id="pair-btn">Allow</button>
+        </div>
+        <p class="error" id="pair-error"></p>
+      </section>
+
+      <section class="card">
+        <div class="row">
+          <span class="label">Preferred source</span>
+          <select id="target">
+            <option value="zoom">Zoom Desktop</option>
+            <option value="system">System output</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="label">Source</span><span class="value" id="source">—</span>
+        </div>
+        <div class="btns">
+          <button id="start">Start Zoom Audio</button>
+          <button id="pause" class="ghost">Pause</button>
+          <button id="stop" class="ghost">Stop</button>
+        </div>
+        <button id="test" class="ghost wide">Local audio test (no transcription)</button>
+      </section>
+
+      <section class="card">
+        <div class="row"><span class="label">Capture method</span><span class="value" id="method">—</span></div>
+        <div class="row"><span class="label">Native format</span><span class="value" id="native">—</span></div>
+        <div class="row"><span class="label">Processed</span><span class="value" id="processed">16000 Hz mono linear16</span></div>
+        <div class="row"><span class="label">Packets / bytes</span><span class="value" id="packets">0 / 0</span></div>
+        <div class="row"><span class="label">Buffer drops</span><span class="value" id="drops">0</span></div>
+        <div class="row"><span class="label">Bridge</span><span class="value" id="bridge">127.0.0.1:8765</span></div>
+        <div class="row"><span class="label">Last error</span><span class="value" id="error">None</span></div>
+        <button id="export" class="ghost wide">Export diagnostics</button>
+        <textarea id="diag" hidden readonly rows="8"></textarea>
+      </section>
+    </main>
+    <script src="main.js"></script>
+  </body>
+</html>

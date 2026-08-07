@@ -1,0 +1,6 @@
+<!-- Merged into the macOS bundle Info.plist (milestone 4).
+     Required for ScreenCaptureKit system-audio capture. -->
+<key>NSScreenCaptureUsageDescription</key>
+<string>InterviewCopilot Companion captures Zoom meeting audio so your interviewer's questions can be transcribed. Your microphone is handled separately by the browser.</string>
+<key>NSAudioCaptureUsageDescription</key>
+<string>InterviewCopilot Companion captures Zoom Desktop audio output for live transcription.</string>
