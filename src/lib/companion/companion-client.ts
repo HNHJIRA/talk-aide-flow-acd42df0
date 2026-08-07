@@ -103,6 +103,17 @@ export class CompanionBridge {
     return this.state;
   }
 
+  isCapturing() {
+    return this.state === "capturing" || this.state === "silent";
+  }
+
+  /** Gate PCM delivery without tearing down the native capture. */
+  setPaused(paused: boolean) {
+    this.paused = paused;
+  }
+
+
+
   private setState(state: CompanionState, detail?: string) {
     this.state = state;
     this.handlers.onState(state, detail);
