@@ -42,3 +42,7 @@ windows = { version = "0.56", features = [
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Development build mode: verbose, human-readable native diagnostics
+# (target/file/line/thread console logs + 2s native audio heartbeat).
+dev-diagnostics = []
+
