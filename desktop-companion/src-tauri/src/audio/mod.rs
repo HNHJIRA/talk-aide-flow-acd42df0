@@ -160,6 +160,21 @@ fn spawn_worker(state: Shared, started: StartedCapture) {
                         serde_json::json!({ "type": "level", "level": level }).to_string(),
                     ));
                     state.evaluate_silence();
+
+                    if dev && last_diag.elapsed() >= Duration::from_secs(2) {
+                        last_diag = Instant::now();
+                        tracing::info!(
+                            level = format!("{:.3}", level),
+                            packets = state.counters.packets_sent.load(Ordering::Relaxed),
+                            bytes = state.counters.bytes_sent.load(Ordering::Relaxed),
+                            frames = state.counters.frames_captured.load(Ordering::Relaxed),
+                            drops = state.counters.buffer_drops.load(Ordering::Relaxed),
+                            native_rate,
+                            native_channels = channels,
+                            paused = paused.load(Ordering::Relaxed),
+                            "native audio heartbeat"
+                        );
+                    }
                 }
             }
 
