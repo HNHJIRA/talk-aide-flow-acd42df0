@@ -453,12 +453,6 @@ export function useCopilotSession(opts: Options) {
 
   const startStt = useCallback(
     (source: SourceKind) => {
-      const speaker: Speaker =
-        source === "remote_meeting"
-          ? "interviewer"
-          : optsRef.current.micMode === "test"
-            ? "test"
-            : "candidate";
       const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
