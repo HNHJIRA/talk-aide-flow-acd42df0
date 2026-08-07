@@ -320,6 +320,7 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       lastConfidence.current = result.confidence;
+      patchDiag({ lastConfidence: result.confidence, lastQuestion: result.isQuestion ? result.question : `(not a question) ${text.slice(0, 60)}` });
       if (!result.isQuestion || !result.requiresAnswer) return;
       if (result.confidence < optsRef.current.confidenceThreshold) return;
 
@@ -367,7 +368,7 @@ export function useCopilotSession(opts: Options) {
 
       if (optsRef.current.autoGenerate) void streamAnswer(inserted.id);
     },
-    [segments, sessionId, pushError, streamAnswer],
+    [segments, sessionId, pushError, streamAnswer, patchDiag],
   );
 
   const queueDetection = useCallback(
@@ -397,6 +398,7 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
+      patchDiag({ lastTranscriptSource: source === "remote_meeting" ? "remote_meeting (INTERVIEWER)" : "microphone (ME)" });
       if (source === "remote_meeting") counts.current.remote += 1;
       else counts.current.local += 1;
 
@@ -414,7 +416,7 @@ export function useCopilotSession(opts: Options) {
         if (speaker === "interviewer") queueDetection(result.text, id ?? null);
       });
     },
-    [persistSegment, queueDetection],
+    [persistSegment, queueDetection, patchDiag],
   );
 
   const startStt = useCallback(
@@ -455,10 +457,12 @@ export function useCopilotSession(opts: Options) {
         const track = stream.getAudioTracks()[0];
         if (!track) throw new Error("No microphone audio track was provided.");
         setMicDeviceLabel(track.label || "Microphone");
+        patchDiag({ micTrackLabel: track.label || "Microphone" });
         track.onended = () => setMicStatus("disconnected");
         const pcm = createPcmSource(stream, (chunk) => micStt.current?.send(chunk));
         micPcm.current = pcm;
         setMicStatus("active");
+        if (liveRef.current && !micStt.current) startSttRef.current?.("microphone");
         return true;
       } catch (error) {
         setMicStatus("error");
@@ -470,7 +474,7 @@ export function useCopilotSession(opts: Options) {
         return false;
       }
     },
-    [pushError],
+    [pushError, patchDiag],
   );
 
   const connectMeetingAudio = useCallback(async () => {
@@ -485,11 +489,16 @@ export function useCopilotSession(opts: Options) {
         } as MediaTrackConstraints,
       });
       const audioTracks = stream.getAudioTracks();
+      patchDiag({
+        meetingTracksReturned: `${stream.getVideoTracks().length} video / ${audioTracks.length} audio` +
+          (audioTracks.length ? ` — "${audioTracks[0]!.label || "unlabelled"}"` : ""),
+        meetingTrackLabel: audioTracks[0]?.label || "none",
+      });
       if (audioTracks.length === 0) {
         stopStream(stream);
         setMeetingStatus("error");
         pushError(
-          "No meeting audio was received. Reconnect, pick the meeting tab, and make sure “Share tab audio” is enabled.",
+          `No meeting audio track was returned by the browser (got ${stream.getVideoTracks().length} video, 0 audio). Reconnect, choose the "Chrome Tab" option with the Google Meet / Zoom tab, and switch on "Also share tab audio" in the picker. Window and entire-screen sharing cannot carry audio in Chrome.`,
         );
         return false;
       }
@@ -508,6 +517,7 @@ export function useCopilotSession(opts: Options) {
       const pcm = createPcmSource(stream, (chunk) => remoteStt_.current?.send(chunk));
       meetingPcm.current = pcm;
       setMeetingStatus("active");
+      if (liveRef.current && !remoteStt_.current) startSttRef.current?.("remote_meeting");
       return true;
     } catch (error) {
       setMeetingStatus("error");
@@ -518,7 +528,7 @@ export function useCopilotSession(opts: Options) {
       );
       return false;
     }
-  }, [pushError]);
+  }, [pushError, patchDiag]);
 
   /* ---------------- lifecycle ---------------- */
 
