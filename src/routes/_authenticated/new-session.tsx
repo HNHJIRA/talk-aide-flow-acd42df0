@@ -130,8 +130,12 @@ function NewSession() {
           </div>
         ) : null}
 
-
+        <section className="panel grid gap-4 p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Context</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
               <Label htmlFor="role">Target role</Label>
+
               <Input id="role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Senior Backend Engineer" />
             </div>
             <div className="space-y-1.5">
