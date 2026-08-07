@@ -1,0 +1,119 @@
+name: Companion Windows Build
+
+on:
+  push:
+    paths:
+      - "desktop-companion/**"
+      - ".github/workflows/companion-windows.yml"
+  pull_request:
+    paths:
+      - "desktop-companion/**"
+      - ".github/workflows/companion-windows.yml"
+  workflow_dispatch:
+    inputs:
+      dev_diagnostics:
+        description: "Build with the dev-diagnostics feature (verbose native logging)"
+        type: boolean
+        default: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  windows-build:
+    name: Build desktop-companion (Windows / MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop-companion/src-tauri -> target
+          cache-on-failure: true
+
+      - name: Report toolchain versions
+        working-directory: desktop-companion/src-tauri
+        run: |
+          rustc -vV
+          cargo -vV
+          cargo tree -p interviewcopilot-companion --depth 1 -e normal || true
+
+      - name: Node dependencies (only if the companion frontend needs them)
+        working-directory: desktop-companion
+        run: |
+          if (Test-Path package.json) {
+            if (Test-Path package-lock.json) { npm ci } else { npm install }
+          } else {
+            Write-Host "No package.json in desktop-companion/ - static frontend, nothing to install."
+          }
+
+      - name: Frontend typecheck (only if configured)
+        working-directory: desktop-companion
+        run: |
+          if ((Test-Path package.json) -and (Test-Path tsconfig.json)) {
+            npx --no-install tsc --noEmit
+          } else {
+            Write-Host "No TypeScript project in desktop-companion/ - skipping typecheck."
+          }
+
+      - name: cargo fmt --check
+        working-directory: desktop-companion/src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: cargo check
+        working-directory: desktop-companion/src-tauri
+        run: cargo check --all-targets --locked --verbose
+        continue-on-error: false
+
+      - name: cargo clippy (non-blocking)
+        working-directory: desktop-companion/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+        continue-on-error: true
+
+      - name: Verify the real WASAPI backend compiled (not a stub)
+        working-directory: desktop-companion/src-tauri
+        run: |
+          cargo tree -p interviewcopilot-companion -i wasapi
+          Select-String -Path src/platform/mod.rs -Pattern 'WasapiBackend'
+          Select-String -Path src/bridge/mod.rs -Pattern '/health','/bridge'
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Tauri Windows build
+        working-directory: desktop-companion/src-tauri
+        env:
+          # Development build: no signing certificates required yet.
+          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: |
+          $features = ""
+          if ("${{ github.event.inputs.dev_diagnostics }}" -ne "false") { $features = "--features dev-diagnostics" }
+          Write-Host "Building with: $features"
+          cargo tauri build --target x86_64-pc-windows-msvc $features
+
+      - name: List build output
+        working-directory: desktop-companion/src-tauri
+        run: |
+          Get-ChildItem -Recurse target/x86_64-pc-windows-msvc/release -Include *.exe,*.msi |
+            Select-Object FullName,Length | Format-List
+
+      - name: Upload Windows executable + installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: interviewcopilot-companion-windows
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
+            desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
