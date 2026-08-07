@@ -54,7 +54,7 @@ desktop-companion/
     audio/resample.rs      rubato streaming resampler, RMS level
     platform/mod.rs        AudioCaptureBackend trait (all cfg(target_os) lives here)
     platform/windows.rs    WASAPI loopback + Zoom process detection
-    platform/macos.rs      ScreenCaptureKit — milestone 4, returns explicit error
+    platform/macos.rs      ScreenCaptureKit application/system audio (Zoom: us.zoom.xos)
     state.rs               single authoritative capture state machine
     security.rs            origin allow-list + bridge token validation
     logging.rs             structured rolling JSON logs
