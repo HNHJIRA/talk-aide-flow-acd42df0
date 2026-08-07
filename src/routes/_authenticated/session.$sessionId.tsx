@@ -387,8 +387,11 @@ function LiveSession() {
                   <span className="text-foreground/90">{segment.text}</span>
                 </p>
               ))}
-              {interim.remote_meeting ? (
-                <p className="text-sm italic text-muted-foreground">{interim.remote_meeting}</p>
+              {interim.remote_meeting || interim.zoom_desktop ? (
+                <p className="text-sm italic text-muted-foreground">
+                  {interim.remote_meeting || interim.zoom_desktop}
+                </p>
+
               ) : null}
               {interim.microphone ? (
                 <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
