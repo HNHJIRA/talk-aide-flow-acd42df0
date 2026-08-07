@@ -37,7 +37,7 @@ function Settings() {
     default_answer_style: "natural",
     default_answer_length: "medium",
     answer_language: "en",
-    auto_generate_answers: true,
+    auto_generate: true,
   });
   const [busy, setBusy] = useState(false);
 
@@ -56,7 +56,7 @@ function Settings() {
         default_answer_style: profile.default_answer_style,
         default_answer_length: profile.default_answer_length,
         answer_language: profile.answer_language,
-        auto_generate_answers: profile.auto_generate_answers,
+        auto_generate: (profile.settings as { auto_generate?: boolean } | null)?.auto_generate ?? true,
       });
     }
   }, [profile]);
@@ -65,7 +65,11 @@ function Settings() {
     setBusy(true);
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return;
-    const { error } = await supabase.from("profiles").update(form).eq("user_id", auth.user.id);
+    const { auto_generate, ...rest } = form;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ ...rest, settings: { ...((profile?.settings as object) ?? {}), auto_generate } })
+      .eq("user_id", auth.user.id);
     setBusy(false);
     if (error) toast.error(error.message);
     else {
@@ -146,8 +150,8 @@ function Settings() {
               </p>
             </div>
             <Switch
-              checked={form.auto_generate_answers}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, auto_generate_answers: v }))}
+              checked={form.auto_generate}
+              onCheckedChange={(v) => setForm((f) => ({ ...f, auto_generate: v }))}
             />
           </div>
 
