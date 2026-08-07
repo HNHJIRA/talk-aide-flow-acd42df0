@@ -123,6 +123,21 @@ export function useCopilotSession(opts: Options) {
   const abortRef = useRef<AbortController | null>(null);
   const counts = useRef({ remote: 0, local: 0 });
   const lastConfidence = useRef<number | null>(null);
+  const [diag, setDiag] = useState({
+    lastTranscriptSource: "none",
+    lastQuestion: "",
+    lastConfidence: null as number | null,
+    aiState: "idle",
+    firstTokenMs: null as number | null,
+    meetingTracksReturned: "not requested",
+    micTrackLabel: "none",
+    meetingTrackLabel: "none",
+  });
+  const patchDiag = useCallback(
+    (patch: Partial<typeof diag>) => setDiag((prev) => ({ ...prev, ...patch })),
+    [],
+  );
+
 
   const pushError = useCallback((message: string) => {
     setErrors((prev) => (prev.includes(message) ? prev : [...prev.slice(-4), message]));
