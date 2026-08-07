@@ -39,6 +39,9 @@ windows = { version = "0.56", features = [
   "Win32_System_Com",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "8.0.1", features = ["macos_13_0"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
