@@ -184,9 +184,11 @@ export function useCopilotSession(opts: Options) {
       const t0 = performance.now();
       let firstToken: number | null = null;
 
+      patchDiag({ aiState: "generating", firstTokenMs: null });
       setQuestions((prev) =>
         prev.map((q) => (q.id === questionId ? { ...q, status: "generating", answer: "" } : q)),
       );
+
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
