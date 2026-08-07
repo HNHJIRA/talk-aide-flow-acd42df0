@@ -224,7 +224,7 @@ fn start_screencapturekit(target: CaptureTarget) -> Result<StartedCapture> {
     std::thread::Builder::new()
         .name("ic-sck-capture".into())
         .spawn(move || {
-            let probe = match build_stream(target, frames_tx, thread_dropped) {
+            match build_stream(target, frames_tx, thread_dropped) {
                 Ok((stream, probe)) => {
                     if let Err(err) = stream.start_capture() {
                         let _ = ready_tx.send(Err(format!(
@@ -234,11 +234,11 @@ fn start_screencapturekit(target: CaptureTarget) -> Result<StartedCapture> {
                         )));
                         return;
                     }
-                    let _ = ready_tx.send(Ok(probe.clone()));
                     tracing::info!(
-                        target_app = %probe.capture_target,
+                        capture_target = %probe.capture_target,
                         "ScreenCaptureKit audio capture started"
                     );
+                    let _ = ready_tx.send(Ok(probe));
 
                     // Own the stream until the shared stop flag flips.
                     while !thread_stop.load(Ordering::Relaxed) {
@@ -249,16 +249,10 @@ fn start_screencapturekit(target: CaptureTarget) -> Result<StartedCapture> {
                     }
                     tracing::info!("ScreenCaptureKit audio capture stopped");
                     drop(stream);
-                    return;
                 }
                 Err(err) => {
                     let _ = ready_tx.send(Err(err.to_string()));
-                    return;
                 }
-            };
-            #[allow(unreachable_code)]
-            {
-                let _ = probe;
             }
         })
         .map_err(|e| anyhow!("Could not start the macOS capture thread: {e}"))?;
