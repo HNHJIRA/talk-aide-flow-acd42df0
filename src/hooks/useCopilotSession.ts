@@ -218,6 +218,7 @@ export function useCopilotSession(opts: Options) {
                 ? "AI credits exhausted. Add credits to keep generating answers."
                 : `AI request failed: ${detail.slice(0, 140) || res.status}`;
           pushError(message);
+          patchDiag({ aiState: "error" });
           setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
           return;
         }
@@ -243,7 +244,10 @@ export function useCopilotSession(opts: Options) {
               };
               const delta = json.choices?.[0]?.delta?.content;
               if (!delta) continue;
-              if (firstToken === null) firstToken = Math.round(performance.now() - t0);
+              if (firstToken === null) {
+                firstToken = Math.round(performance.now() - t0);
+                patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
+              }
               answer += delta;
               setQuestions((prev) =>
                 prev.map((q) => (q.id === questionId ? { ...q, answer, firstTokenMs: firstToken } : q)),
@@ -276,6 +280,7 @@ export function useCopilotSession(opts: Options) {
             ),
           );
           await supabase.from("detected_questions").update({ status: "answered" }).eq("id", questionId);
+          patchDiag({ aiState: "answered" });
         } else {
           setQuestions((prev) =>
             prev.map((q) => (q.id === questionId ? { ...q, status: "answered" } : q)),
@@ -283,14 +288,16 @@ export function useCopilotSession(opts: Options) {
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
+          patchDiag({ aiState: "stopped" });
           setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "stopped" } : q)));
           return;
         }
+        patchDiag({ aiState: "error" });
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
         setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
       }
     },
-    [sessionId, pushError],
+    [sessionId, pushError, patchDiag],
   );
 
   /* ---------------- question detection ---------------- */
