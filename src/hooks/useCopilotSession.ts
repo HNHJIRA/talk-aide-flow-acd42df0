@@ -666,17 +666,24 @@ export function useCopilotSession(opts: Options) {
   const debug: DebugInfo = useMemo(
     () => ({
       micTrack: micStream.current?.getAudioTracks()[0]?.readyState ?? "none",
+      micTrackLabel: diag.micTrackLabel,
       meetingTrack: meetingStream.current?.getAudioTracks()[0]?.readyState ?? "none",
+      meetingTrackLabel: diag.meetingTrackLabel,
+      meetingTracksReturned: diag.meetingTracksReturned,
       micLevel,
       meetingLevel,
       remoteStt,
       localStt,
       remoteCount: counts.current.remote,
       localCount: counts.current.local,
-      lastConfidence: lastConfidence.current,
+      lastTranscriptSource: diag.lastTranscriptSource,
+      lastQuestion: diag.lastQuestion,
+      lastConfidence: diag.lastConfidence,
+      aiState: diag.aiState,
+      firstTokenMs: diag.firstTokenMs,
       errors,
     }),
-    [micLevel, meetingLevel, remoteStt, localStt, errors],
+    [micLevel, meetingLevel, remoteStt, localStt, errors, diag],
   );
 
   return {
