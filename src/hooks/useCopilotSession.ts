@@ -38,16 +38,24 @@ export type QuestionItem = {
 
 export type DebugInfo = {
   micTrack: string;
+  micTrackLabel: string;
   meetingTrack: string;
+  meetingTrackLabel: string;
+  meetingTracksReturned: string;
   micLevel: number;
   meetingLevel: number;
   remoteStt: SttState;
   localStt: SttState;
   remoteCount: number;
   localCount: number;
+  lastTranscriptSource: string;
+  lastQuestion: string;
   lastConfidence: number | null;
+  aiState: string;
+  firstTokenMs: number | null;
   errors: string[];
 };
+
 
 const normalize = (text: string) =>
   text
