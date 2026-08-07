@@ -443,20 +443,40 @@ export function useCopilotSession(opts: Options) {
       speaker: Speaker,
       result: { text: string; isFinal: boolean; confidence: number | null; startMs: number | null; endMs: number | null },
     ) => {
+      const isRemote = source !== "microphone";
       if (!result.isFinal) {
         setInterim((prev) => ({ ...prev, [source]: result.text }));
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
+
+      const norm = normalize(result.text);
+      const now = Date.now();
+      if (source === "microphone") {
+        recentMicFinals.current = recentMicFinals.current.filter((m) => now - m.at < 12_000);
+        recentMicFinals.current.push({ norm, at: now });
+      } else {
+        // Echo guard: speaker bleed / Zoom sidetone can feed the candidate's own
+        // voice back through the remote capture. Prefer microphone attribution and
+        // never let an echo become an interviewer question.
+        const echo = recentMicFinals.current.some(
+          (m) => now - m.at < 6000 && similar(m.norm, norm) > 0.85,
+        );
+        if (echo) {
+          counts.current.echo += 1;
+          patchDiag({ lastTranscriptSource: `${source} (echo of microphone — discarded)` });
+          return;
+        }
+      }
+
       patchDiag({
-        lastTranscriptSource:
-          source === "remote_meeting"
-            ? "remote_meeting (INTERVIEWER)"
-            : speaker === "test"
-              ? "microphone (TEST AUDIO / single source)"
-              : "microphone (ME / CANDIDATE)",
+        lastTranscriptSource: isRemote
+          ? `${source} (INTERVIEWER)`
+          : speaker === "test"
+            ? "microphone (TEST AUDIO / single source)"
+            : "microphone (ME / CANDIDATE)",
       });
-      if (source === "remote_meeting") counts.current.remote += 1;
+      if (isRemote) counts.current.remote += 1;
       else counts.current.local += 1;
 
       const segment: Segment = {
@@ -471,30 +491,33 @@ export function useCopilotSession(opts: Options) {
 
       void persistSegment(segment, result.confidence, result.startMs, result.endMs).then((id) => {
         if (source === "microphone") lastMicSegment.current = { text: result.text, id: id ?? null };
-        // Production rule: only the remote meeting (INTERVIEWER) stream can auto-trigger
-        // question detection. Microphone speech is CANDIDATE and never fires the pipeline,
-        // except in explicit STT Test Mode or opt-in mic-only fallback auto-detection.
+        // Production rule: only a remote (INTERVIEWER) stream — meeting tab or Zoom
+        // Desktop companion — can auto-trigger question detection. Microphone speech is
+        // CANDIDATE and never fires the pipeline, except in explicit STT Test Mode or
+        // opt-in mic-only fallback auto-detection.
         const mode = optsRef.current.micMode;
         const eligible =
-          source === "remote_meeting" ||
-          mode === "test" ||
-          (mode === "fallback" && optsRef.current.fallbackAutoDetect);
+          isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect);
         if (eligible) queueDetection(result.text, id ?? null);
       });
     },
     [persistSegment, queueDetection, patchDiag],
   );
 
+  /** Which remote capture currently feeds the single remote Deepgram socket. */
+  const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
+
   const startStt = useCallback(
     (source: SourceKind) => {
-      const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
+      const isRemote = source !== "microphone";
+      const setState = isRemote ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
         onResult: (result) =>
           handleResult(
-            source,
-            source === "remote_meeting"
+            isRemote ? remoteSourceRef.current : source,
+            isRemote
               ? "interviewer"
               : optsRef.current.micMode === "test"
                 ? "test"
@@ -506,13 +529,14 @@ export function useCopilotSession(opts: Options) {
           if (state === "error" && detail) pushError(detail);
         },
       });
-      if (source === "remote_meeting") remoteStt_.current = connection;
+      if (isRemote) remoteStt_.current = connection;
       else micStt.current = connection;
       void connection.start();
       return connection;
     },
     [handleResult, pushError],
   );
+
 
   // Stable indirection so connect handlers defined above can open an STT socket
   // when a source is attached after the session is already live.
