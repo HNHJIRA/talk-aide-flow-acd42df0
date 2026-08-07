@@ -3,8 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
 import { SttConnection, type SttState } from "@/lib/stt/stt-connection";
 import { createSttSession, detectQuestion } from "@/lib/copilot.functions";
+import {
+  CompanionBridge,
+  detectCompanion,
+  COMPANION_SAMPLE_RATE,
+  type CompanionFormat,
+  type CompanionHealth,
+  type CompanionState,
+} from "@/lib/companion/companion-client";
 
-export type SourceKind = "microphone" | "remote_meeting";
+/** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
+export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
+
 export type SourceStatus = "disconnected" | "connecting" | "active" | "silent" | "error";
 export type SessionState =
   | "idle"
@@ -59,8 +69,21 @@ export type DebugInfo = {
   micMode: MicMode;
   micRole: string;
   detectionSources: string;
+  /* --- desktop companion / Zoom Desktop --- */
+  companionState: CompanionState;
+  companionVersion: string;
+  companionOs: string;
+  companionBackend: string;
+  remoteCaptureMethod: string;
+  remoteSourceDetected: string;
+  remoteSampleRate: string;
+  remoteChannels: string;
+  processedSampleRate: string;
+  echoSuppressed: number;
+  lastCaptureError: string;
   errors: string[];
 };
+
 
 
 const normalize = (text: string) =>
@@ -114,14 +137,22 @@ export function useCopilotSession(opts: Options) {
   const [localStt, setLocalStt] = useState<SttState>("idle");
   const [remoteStt, setRemoteStt] = useState<SttState>("idle");
   const [segments, setSegments] = useState<Segment[]>([]);
-  const [interim, setInterim] = useState<{ microphone: string; remote_meeting: string }>({
+  const [interim, setInterim] = useState<{ microphone: string; remote_meeting: string; zoom_desktop: string }>({
     microphone: "",
     remote_meeting: "",
+    zoom_desktop: "",
   });
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [online, setOnline] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+
+  /* --- desktop companion --- */
+  const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
+  const [companionState, setCompanionState] = useState<CompanionState>("disconnected");
+  const [companionLevel, setCompanionLevel] = useState(0);
+  const [companionFormat, setCompanionFormat] = useState<CompanionFormat | null>(null);
+  const companionRef = useRef<CompanionBridge | null>(null);
 
   const micStream = useRef<MediaStream | null>(null);
   const meetingStream = useRef<MediaStream | null>(null);
@@ -135,9 +166,10 @@ export function useCopilotSession(opts: Options) {
   const detectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentQuestions = useRef<{ norm: string; at: number }[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const counts = useRef({ remote: 0, local: 0 });
+  const counts = useRef({ remote: 0, local: 0, echo: 0 });
   const liveRef = useRef(false);
   const lastConfidence = useRef<number | null>(null);
+  const recentMicFinals = useRef<{ norm: string; at: number }[]>([]);
   const [diag, setDiag] = useState({
     lastTranscriptSource: "none",
     lastQuestion: "",
@@ -147,12 +179,14 @@ export function useCopilotSession(opts: Options) {
     meetingTracksReturned: "not requested",
     micTrackLabel: "none",
     meetingTrackLabel: "none",
+    lastCaptureError: "none",
   });
   const lastMicSegment = useRef<{ text: string; id: string | null } | null>(null);
   const patchDiag = useCallback(
     (patch: Partial<typeof diag>) => setDiag((prev) => ({ ...prev, ...patch })),
     [],
   );
+
 
 
   const pushError = useCallback((message: string) => {
@@ -409,20 +443,40 @@ export function useCopilotSession(opts: Options) {
       speaker: Speaker,
       result: { text: string; isFinal: boolean; confidence: number | null; startMs: number | null; endMs: number | null },
     ) => {
+      const isRemote = source !== "microphone";
       if (!result.isFinal) {
         setInterim((prev) => ({ ...prev, [source]: result.text }));
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
+
+      const norm = normalize(result.text);
+      const now = Date.now();
+      if (source === "microphone") {
+        recentMicFinals.current = recentMicFinals.current.filter((m) => now - m.at < 12_000);
+        recentMicFinals.current.push({ norm, at: now });
+      } else {
+        // Echo guard: speaker bleed / Zoom sidetone can feed the candidate's own
+        // voice back through the remote capture. Prefer microphone attribution and
+        // never let an echo become an interviewer question.
+        const echo = recentMicFinals.current.some(
+          (m) => now - m.at < 6000 && similar(m.norm, norm) > 0.85,
+        );
+        if (echo) {
+          counts.current.echo += 1;
+          patchDiag({ lastTranscriptSource: `${source} (echo of microphone — discarded)` });
+          return;
+        }
+      }
+
       patchDiag({
-        lastTranscriptSource:
-          source === "remote_meeting"
-            ? "remote_meeting (INTERVIEWER)"
-            : speaker === "test"
-              ? "microphone (TEST AUDIO / single source)"
-              : "microphone (ME / CANDIDATE)",
+        lastTranscriptSource: isRemote
+          ? `${source} (INTERVIEWER)`
+          : speaker === "test"
+            ? "microphone (TEST AUDIO / single source)"
+            : "microphone (ME / CANDIDATE)",
       });
-      if (source === "remote_meeting") counts.current.remote += 1;
+      if (isRemote) counts.current.remote += 1;
       else counts.current.local += 1;
 
       const segment: Segment = {
@@ -437,30 +491,33 @@ export function useCopilotSession(opts: Options) {
 
       void persistSegment(segment, result.confidence, result.startMs, result.endMs).then((id) => {
         if (source === "microphone") lastMicSegment.current = { text: result.text, id: id ?? null };
-        // Production rule: only the remote meeting (INTERVIEWER) stream can auto-trigger
-        // question detection. Microphone speech is CANDIDATE and never fires the pipeline,
-        // except in explicit STT Test Mode or opt-in mic-only fallback auto-detection.
+        // Production rule: only a remote (INTERVIEWER) stream — meeting tab or Zoom
+        // Desktop companion — can auto-trigger question detection. Microphone speech is
+        // CANDIDATE and never fires the pipeline, except in explicit STT Test Mode or
+        // opt-in mic-only fallback auto-detection.
         const mode = optsRef.current.micMode;
         const eligible =
-          source === "remote_meeting" ||
-          mode === "test" ||
-          (mode === "fallback" && optsRef.current.fallbackAutoDetect);
+          isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect);
         if (eligible) queueDetection(result.text, id ?? null);
       });
     },
     [persistSegment, queueDetection, patchDiag],
   );
 
+  /** Which remote capture currently feeds the single remote Deepgram socket. */
+  const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
+
   const startStt = useCallback(
     (source: SourceKind) => {
-      const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
+      const isRemote = source !== "microphone";
+      const setState = isRemote ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
         onResult: (result) =>
           handleResult(
-            source,
-            source === "remote_meeting"
+            isRemote ? remoteSourceRef.current : source,
+            isRemote
               ? "interviewer"
               : optsRef.current.micMode === "test"
                 ? "test"
@@ -472,13 +529,14 @@ export function useCopilotSession(opts: Options) {
           if (state === "error" && detail) pushError(detail);
         },
       });
-      if (source === "remote_meeting") remoteStt_.current = connection;
+      if (isRemote) remoteStt_.current = connection;
       else micStt.current = connection;
       void connection.start();
       return connection;
     },
     [handleResult, pushError],
   );
+
 
   // Stable indirection so connect handlers defined above can open an STT socket
   // when a source is attached after the session is already live.
@@ -555,6 +613,7 @@ export function useCopilotSession(opts: Options) {
       meetingStream.current?.getTracks().forEach((t) => t.stop());
       meetingPcm.current?.stop();
       meetingStream.current = stream;
+      remoteSourceRef.current = "remote_meeting";
       audioTracks[0]!.onended = () => {
         setMeetingStatus("disconnected");
         pushError("Meeting audio sharing was stopped in the browser.");
@@ -575,11 +634,79 @@ export function useCopilotSession(opts: Options) {
     }
   }, [pushError, patchDiag]);
 
+  /* ---------------- desktop companion (Zoom Desktop) ---------------- */
+
+  /** Probe the local bridge; returns the health payload or null when not installed. */
+  const refreshCompanion = useCallback(async () => {
+    const health = await detectCompanion();
+    setCompanionHealth(health);
+    if (!health) setCompanionState((prev) => (prev === "capturing" ? prev : "not_installed"));
+    return health;
+  }, []);
+
+  /**
+   * Attach the paired Desktop Companion. Audio only starts flowing after the user
+   * explicitly presses "Connect Zoom Desktop Audio" (startCompanionCapture).
+   */
+  const connectCompanion = useCallback(
+    async (bridgeToken: string, target: "zoom" | "system" = "zoom") => {
+      const health = companionHealth ?? (await refreshCompanion());
+      if (!health) {
+        setCompanionState("not_installed");
+        pushError("InterviewCopilot Companion is not running on this computer.");
+        return false;
+      }
+      companionRef.current?.disconnect();
+      const bridge = new CompanionBridge(health.port, bridgeToken, target, {
+        onState: (state, detail) => {
+          setCompanionState(state);
+          if (state === "capturing") {
+            remoteSourceRef.current = "zoom_desktop";
+            setMeetingStatus("active");
+            if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+          }
+          if (state === "silent") setMeetingStatus("silent");
+          if (state === "stopped" || state === "disconnected") setMeetingStatus("disconnected");
+          if (state === "error" && detail) {
+            setMeetingStatus("error");
+            patchDiag({ lastCaptureError: detail });
+            pushError(detail);
+          }
+        },
+        onLevel: (level) => setCompanionLevel(level),
+        onFormat: (format) => setCompanionFormat(format),
+        onPcm: (chunk) => remoteStt_.current?.send(chunk),
+      });
+      companionRef.current = bridge;
+      bridge.connect();
+      return true;
+    },
+    [companionHealth, refreshCompanion, pushError, patchDiag],
+  );
+
+  /** Explicit user action — the companion never captures silently. */
+  const startCompanionCapture = useCallback(() => {
+    if (!companionRef.current) {
+      pushError("Pair the Desktop Companion first.");
+      return;
+    }
+    remoteSourceRef.current = "zoom_desktop";
+    companionRef.current.startCapture();
+    if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+  }, [pushError]);
+
+  const stopCompanionCapture = useCallback(() => {
+    companionRef.current?.stopCapture();
+    setMeetingStatus("disconnected");
+  }, []);
+
+
   /* ---------------- lifecycle ---------------- */
 
   const startListening = useCallback(async () => {
     if (micPcm.current && !micStt.current) startStt("microphone");
-    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting");
+    if ((meetingPcm.current || companionRef.current?.isCapturing()) && !remoteStt_.current)
+      startStt(remoteSourceRef.current);
     startedAt.current = Date.now();
     liveRef.current = true;
     setSessionState("listening");
@@ -594,12 +721,14 @@ export function useCopilotSession(opts: Options) {
     // never opens a duplicate connection or replays buffered audio.
     micPcm.current?.setPaused(true);
     meetingPcm.current?.setPaused(true);
+    companionRef.current?.setPaused(true);
     setSessionState("paused");
   }, []);
 
   const resume = useCallback(() => {
     micPcm.current?.setPaused(false);
     meetingPcm.current?.setPaused(false);
+    companionRef.current?.setPaused(false);
     setSessionState("listening");
   }, []);
 
@@ -615,6 +744,10 @@ export function useCopilotSession(opts: Options) {
     meetingPcm.current?.stop();
     micPcm.current = null;
     meetingPcm.current = null;
+    companionRef.current?.disconnect();
+    companionRef.current = null;
+    setCompanionState("disconnected");
+    setCompanionLevel(0);
     stopStream(micStream.current);
     stopStream(meetingStream.current);
     micStream.current = null;
@@ -622,6 +755,7 @@ export function useCopilotSession(opts: Options) {
     setMicStatus("disconnected");
     setMeetingStatus("disconnected");
   }, []);
+
 
   const endSession = useCallback(async () => {
     setSessionState("ending");
@@ -720,7 +854,7 @@ export function useCopilotSession(opts: Options) {
       meetingTrackLabel: diag.meetingTrackLabel,
       meetingTracksReturned: diag.meetingTracksReturned,
       micLevel,
-      meetingLevel,
+      meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
       remoteStt,
       localStt,
       remoteCount: counts.current.remote,
@@ -739,13 +873,50 @@ export function useCopilotSession(opts: Options) {
             : "CANDIDATE (ME)",
       detectionSources:
         opts.micMode === "test"
-          ? "microphone (test mode) + meeting"
+          ? "microphone (test mode) + interviewer stream"
           : opts.micMode === "fallback" && opts.fallbackAutoDetect
-            ? "microphone (fallback auto-detect) + meeting"
-            : "meeting/interviewer only",
+            ? "microphone (fallback auto-detect) + interviewer stream"
+            : "interviewer stream only (meeting tab / Zoom Desktop)",
+      companionState,
+      companionVersion: companionHealth?.version ?? "not detected",
+      companionOs: companionHealth?.os ?? "unknown",
+      companionBackend: companionHealth?.captureBackend ?? "unknown",
+      remoteCaptureMethod:
+        remoteSourceRef.current === "zoom_desktop"
+          ? (companionFormat?.captureMethod ?? "companion (pending)")
+          : "browser getDisplayMedia (tab audio)",
+      remoteSourceDetected:
+        remoteSourceRef.current === "zoom_desktop"
+          ? companionFormat
+            ? companionFormat.sourceDetected
+              ? `yes — ${companionFormat.captureTarget}`
+              : "no source detected"
+            : "unknown"
+          : meetingStatus === "active"
+            ? "yes — shared tab"
+            : "no",
+      remoteSampleRate: String(companionFormat?.sampleRate ?? COMPANION_SAMPLE_RATE),
+      remoteChannels: String(companionFormat?.channels ?? 1),
+      processedSampleRate: `${COMPANION_SAMPLE_RATE} Hz mono linear16`,
+      echoSuppressed: counts.current.echo,
+      lastCaptureError: diag.lastCaptureError,
       errors,
     }),
-    [micLevel, meetingLevel, remoteStt, localStt, errors, diag, opts.micMode, opts.fallbackAutoDetect],
+    [
+      micLevel,
+      meetingLevel,
+      companionLevel,
+      remoteStt,
+      localStt,
+      errors,
+      diag,
+      opts.micMode,
+      opts.fallbackAutoDetect,
+      companionState,
+      companionHealth,
+      companionFormat,
+      meetingStatus,
+    ],
   );
 
   return {
@@ -754,7 +925,7 @@ export function useCopilotSession(opts: Options) {
     meetingStatus,
     micDeviceLabel,
     micLevel,
-    meetingLevel,
+    meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
     localStt,
     remoteStt,
     segments,
@@ -764,8 +935,14 @@ export function useCopilotSession(opts: Options) {
     online,
     elapsed,
     debug,
+    companionHealth,
+    companionState,
     connectMicrophone,
     connectMeetingAudio,
+    refreshCompanion,
+    connectCompanion,
+    startCompanionCapture,
+    stopCompanionCapture,
     startListening,
     pause,
     resume,
@@ -777,3 +954,4 @@ export function useCopilotSession(opts: Options) {
     promoteLastMicSegment,
   };
 }
+

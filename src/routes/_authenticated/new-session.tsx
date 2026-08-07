@@ -28,9 +28,15 @@ export const Route = createFileRoute("/_authenticated/new-session")({
 const PLATFORMS = [
   { value: "google_meet", label: "Google Meet", hint: "Share the Meet tab with 'Share tab audio'" },
   { value: "zoom_web", label: "Zoom Web", hint: "Join in browser, then share that tab's audio" },
+  {
+    value: "zoom_desktop",
+    label: "Zoom Desktop",
+    hint: "Native app audio via the Desktop Companion (browser tab-share fallback)",
+  },
   { value: "manual", label: "Microphone only", hint: "Speakerphone or in-person practice" },
   { value: "practice", label: "Practice mode", hint: "Rehearse with your own questions" },
 ] as const;
+
 
 function NewSession() {
   const navigate = useNavigate();
@@ -113,11 +119,23 @@ function NewSession() {
           </div>
         </section>
 
+        {platform === "zoom_desktop" ? (
+          <div className="panel border-primary/40 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Zoom Desktop needs the InterviewCopilot Companion</p>
+            <p className="mt-1">
+              Browsers cannot record another desktop app's audio. The companion captures Zoom output natively (WASAPI
+              loopback on Windows, ScreenCaptureKit on macOS) and streams it to this session after you pair it. You can
+              pair it in the live room — if it isn't installed, the room falls back to browser tab-audio sharing.
+            </p>
+          </div>
+        ) : null}
+
         <section className="panel grid gap-4 p-6">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Context</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="role">Target role</Label>
+
               <Input id="role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Senior Backend Engineer" />
             </div>
             <div className="space-y-1.5">

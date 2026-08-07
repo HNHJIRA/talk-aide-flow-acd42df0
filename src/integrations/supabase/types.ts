@@ -58,6 +58,59 @@ export type Database = {
           },
         ]
       }
+      companion_pairings: {
+        Row: {
+          approved_at: string | null
+          bridge_token: string
+          code: string
+          companion_os: string | null
+          companion_version: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          revoked_at: string | null
+          session_id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string | null
+          bridge_token: string
+          code: string
+          companion_os?: string | null
+          companion_version?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          revoked_at?: string | null
+          session_id: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string | null
+          bridge_token?: string
+          code?: string
+          companion_os?: string | null
+          companion_version?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          revoked_at?: string | null
+          session_id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "companion_pairings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "interview_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       detected_questions: {
         Row: {
           category: string

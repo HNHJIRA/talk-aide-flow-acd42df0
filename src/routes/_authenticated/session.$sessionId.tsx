@@ -18,6 +18,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AudioLevelMeter, StatusDot } from "@/components/copilot/StatusIndicators";
+import { CompanionPanel } from "@/components/copilot/CompanionPanel";
+
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
 import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
@@ -103,8 +105,14 @@ function LiveSession() {
     online,
     elapsed,
     debug,
+    companionHealth,
+    companionState,
     connectMicrophone,
     connectMeetingAudio,
+    refreshCompanion,
+    connectCompanion,
+    startCompanionCapture,
+    stopCompanionCapture,
     startListening,
     pause,
     resume,
@@ -116,8 +124,11 @@ function LiveSession() {
     promoteLastMicSegment,
   } = copilot;
 
+  const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
+  const [forceTabFallback, setForceTabFallback] = useState(false);
   const needsMeetingAudio = session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
+
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
@@ -181,29 +192,46 @@ function LiveSession() {
               Audio sources
             </h2>
             <div className="grid gap-3">
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <MonitorSpeaker className="size-4 text-primary" /> Meeting tab
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {meetingStatus === "active"
-                      ? "Receiving audio from the shared tab"
-                      : "Share the meeting tab and tick “Also share tab audio”"}
-                  </p>
+              {isZoomDesktop ? (
+                <CompanionPanel
+                  sessionId={sessionId}
+                  health={companionHealth}
+                  state={companionState}
+                  level={meetingLevel}
+                  onRefresh={refreshCompanion}
+                  onConnect={(token) => connectCompanion(token, "zoom")}
+                  onStartCapture={startCompanionCapture}
+                  onStopCapture={stopCompanionCapture}
+                  onFallback={() => setForceTabFallback(true)}
+                />
+              ) : null}
+
+              {!isZoomDesktop || forceTabFallback ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      <MonitorSpeaker className="size-4 text-primary" /> Meeting tab
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {meetingStatus === "active"
+                        ? "Receiving audio from the shared tab"
+                        : "Share the meeting tab and tick “Also share tab audio”"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <AudioLevelMeter level={meetingLevel} label="Meeting" />
+                    <Button
+                      size="sm"
+                      variant={meetingStatus === "active" ? "outline" : "default"}
+                      onClick={() => void connectMeetingAudio()}
+                      disabled={!caps.hasGetDisplayMedia}
+                    >
+                      {meetingStatus === "active" ? "Reconnect" : "Connect"}
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <AudioLevelMeter level={meetingLevel} label="Meeting" />
-                  <Button
-                    size="sm"
-                    variant={meetingStatus === "active" ? "outline" : "default"}
-                    onClick={() => void connectMeetingAudio()}
-                    disabled={!caps.hasGetDisplayMedia}
-                  >
-                    {meetingStatus === "active" ? "Reconnect" : "Connect"}
-                  </Button>
-                </div>
-              </div>
+              ) : null}
+
 
               <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
                 <div className="min-w-0">
@@ -300,11 +328,19 @@ function LiveSession() {
                   ["Meeting track", `${debug.meetingTrack} · ${debug.meetingTrackLabel}`],
                   ["Tracks returned by browser", debug.meetingTracksReturned],
                   ["Deepgram (microphone)", debug.localStt],
-                  ["Deepgram (meeting)", debug.remoteStt],
+                  ["Deepgram (interviewer)", debug.remoteStt],
                   ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
                   ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
                   ["Microphone role", debug.micRole],
                   ["Detection sources", debug.detectionSources],
+                  ["Companion state", debug.companionState],
+                  ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
+                  ["Companion capture backend", debug.companionBackend],
+                  ["Interviewer capture method", debug.remoteCaptureMethod],
+                  ["Interviewer source detected", debug.remoteSourceDetected],
+                  ["Capture format", `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`],
+                  ["Echo/duplicate segments dropped", String(debug.echoSuppressed)],
+                  ["Last capture error", debug.lastCaptureError],
                   ["Current transcript source", debug.lastTranscriptSource],
                   ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
                   ["Last detected question", debug.lastQuestion || "—"],
@@ -312,6 +348,7 @@ function LiveSession() {
                   ["AI generation state", debug.aiState],
                   ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
                   ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
+
                 ].map(([label, value]) => (
                   <div key={label} className="contents">
                     <dt className="text-muted-foreground">{label}</dt>
@@ -350,8 +387,11 @@ function LiveSession() {
                   <span className="text-foreground/90">{segment.text}</span>
                 </p>
               ))}
-              {interim.remote_meeting ? (
-                <p className="text-sm italic text-muted-foreground">{interim.remote_meeting}</p>
+              {interim.remote_meeting || interim.zoom_desktop ? (
+                <p className="text-sm italic text-muted-foreground">
+                  {interim.remote_meeting || interim.zoom_desktop}
+                </p>
+
               ) : null}
               {interim.microphone ? (
                 <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>

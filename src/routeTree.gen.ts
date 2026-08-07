@@ -20,6 +20,7 @@ import { Route as ApiAnswerStreamRouteImport } from './routes/api/answer-stream'
 import { Route as AuthenticatedHistoryIndexRouteImport } from './routes/_authenticated/history.index'
 import { Route as AuthenticatedHistorySessionIdRouteImport } from './routes/_authenticated/history.$sessionId'
 import { Route as AuthenticatedSessionSessionIdRouteImport } from './routes/_authenticated/session.$sessionId'
+import { Route as ApiPublicCompanionPairRouteImport } from './routes/api/public/companion/pair'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -78,6 +79,11 @@ const AuthenticatedSessionSessionIdRoute =
     path: '/session/$sessionId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const ApiPublicCompanionPairRoute = ApiPublicCompanionPairRouteImport.update({
+  id: '/api/public/companion/pair',
+  path: '/api/public/companion/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -90,6 +96,7 @@ export interface FileRoutesByFullPath {
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
   '/history/': typeof AuthenticatedHistoryIndexRoute
+  '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
   '/history': typeof AuthenticatedHistoryIndexRoute
+  '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/_authenticated/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/_authenticated/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
   '/_authenticated/history/': typeof AuthenticatedHistoryIndexRoute
+  '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/history/$sessionId'
     | '/session/$sessionId'
     | '/history/'
+    | '/api/public/companion/pair'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/history/$sessionId'
     | '/session/$sessionId'
     | '/history'
+    | '/api/public/companion/pair'
   id:
     | '__root__'
     | '/'
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | '/_authenticated/history/$sessionId'
     | '/_authenticated/session/$sessionId'
     | '/_authenticated/history/'
+    | '/api/public/companion/pair'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -162,6 +174,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiAnswerStreamRoute: typeof ApiAnswerStreamRoute
+  ApiPublicCompanionPairRoute: typeof ApiPublicCompanionPairRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -243,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSessionSessionIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/companion/pair': {
+      id: '/api/public/companion/pair'
+      path: '/api/public/companion/pair'
+      fullPath: '/api/public/companion/pair'
+      preLoaderRoute: typeof ApiPublicCompanionPairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -274,6 +294,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiAnswerStreamRoute: ApiAnswerStreamRoute,
+  ApiPublicCompanionPairRoute: ApiPublicCompanionPairRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
