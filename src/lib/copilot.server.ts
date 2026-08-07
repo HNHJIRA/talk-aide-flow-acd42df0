@@ -67,7 +67,7 @@ export async function deepgramDiagnostics(): Promise<DeepgramDiagnostics> {
       configured: false,
       scopes: [],
       canGrant: false,
-      canMintTempKey: false,
+      
       mode: null,
       problem: "No Deepgram API key is configured.",
     };
