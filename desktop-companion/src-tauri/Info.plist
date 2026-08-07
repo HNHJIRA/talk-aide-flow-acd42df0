@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri merges this file into the generated macOS bundle Info.plist.
+     ScreenCaptureKit refuses to start system-audio capture without
+     NSScreenCaptureUsageDescription. -->
+<plist version="1.0">
+<dict>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>InterviewCopilot Companion captures Zoom meeting audio so your interviewer's questions can be transcribed. Your microphone is handled separately by the browser.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>InterviewCopilot Companion captures Zoom Desktop audio output for live transcription.</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+</dict>
+</plist>
