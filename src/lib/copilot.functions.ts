@@ -29,6 +29,14 @@ export const createSttSession = createServerFn({ method: "POST" })
     return mintDeepgramKey();
   });
 
+export const sttDiagnostics = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const { deepgramDiagnostics } = await import("@/lib/copilot.server");
+    return deepgramDiagnostics();
+  });
+
+
 export const sttConfigured = createServerFn({ method: "GET" }).handler(async () => ({
   configured: Boolean(process.env["DEEPGRAM_API_KEY"]),
 }));

@@ -38,16 +38,24 @@ export type QuestionItem = {
 
 export type DebugInfo = {
   micTrack: string;
+  micTrackLabel: string;
   meetingTrack: string;
+  meetingTrackLabel: string;
+  meetingTracksReturned: string;
   micLevel: number;
   meetingLevel: number;
   remoteStt: SttState;
   localStt: SttState;
   remoteCount: number;
   localCount: number;
+  lastTranscriptSource: string;
+  lastQuestion: string;
   lastConfidence: number | null;
+  aiState: string;
+  firstTokenMs: number | null;
   errors: string[];
 };
+
 
 const normalize = (text: string) =>
   text
@@ -114,7 +122,23 @@ export function useCopilotSession(opts: Options) {
   const recentQuestions = useRef<{ norm: string; at: number }[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const counts = useRef({ remote: 0, local: 0 });
+  const liveRef = useRef(false);
   const lastConfidence = useRef<number | null>(null);
+  const [diag, setDiag] = useState({
+    lastTranscriptSource: "none",
+    lastQuestion: "",
+    lastConfidence: null as number | null,
+    aiState: "idle",
+    firstTokenMs: null as number | null,
+    meetingTracksReturned: "not requested",
+    micTrackLabel: "none",
+    meetingTrackLabel: "none",
+  });
+  const patchDiag = useCallback(
+    (patch: Partial<typeof diag>) => setDiag((prev) => ({ ...prev, ...patch })),
+    [],
+  );
+
 
   const pushError = useCallback((message: string) => {
     setErrors((prev) => (prev.includes(message) ? prev : [...prev.slice(-4), message]));
@@ -161,9 +185,11 @@ export function useCopilotSession(opts: Options) {
       const t0 = performance.now();
       let firstToken: number | null = null;
 
+      patchDiag({ aiState: "generating", firstTokenMs: null });
       setQuestions((prev) =>
         prev.map((q) => (q.id === questionId ? { ...q, status: "generating", answer: "" } : q)),
       );
+
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -193,6 +219,7 @@ export function useCopilotSession(opts: Options) {
                 ? "AI credits exhausted. Add credits to keep generating answers."
                 : `AI request failed: ${detail.slice(0, 140) || res.status}`;
           pushError(message);
+          patchDiag({ aiState: "error" });
           setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
           return;
         }
@@ -218,7 +245,10 @@ export function useCopilotSession(opts: Options) {
               };
               const delta = json.choices?.[0]?.delta?.content;
               if (!delta) continue;
-              if (firstToken === null) firstToken = Math.round(performance.now() - t0);
+              if (firstToken === null) {
+                firstToken = Math.round(performance.now() - t0);
+                patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
+              }
               answer += delta;
               setQuestions((prev) =>
                 prev.map((q) => (q.id === questionId ? { ...q, answer, firstTokenMs: firstToken } : q)),
@@ -251,6 +281,7 @@ export function useCopilotSession(opts: Options) {
             ),
           );
           await supabase.from("detected_questions").update({ status: "answered" }).eq("id", questionId);
+          patchDiag({ aiState: "answered" });
         } else {
           setQuestions((prev) =>
             prev.map((q) => (q.id === questionId ? { ...q, status: "answered" } : q)),
@@ -258,14 +289,16 @@ export function useCopilotSession(opts: Options) {
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
+          patchDiag({ aiState: "stopped" });
           setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "stopped" } : q)));
           return;
         }
+        patchDiag({ aiState: "error" });
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
         setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
       }
     },
-    [sessionId, pushError],
+    [sessionId, pushError, patchDiag],
   );
 
   /* ---------------- question detection ---------------- */
@@ -288,6 +321,7 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       lastConfidence.current = result.confidence;
+      patchDiag({ lastConfidence: result.confidence, lastQuestion: result.isQuestion ? result.question : `(not a question) ${text.slice(0, 60)}` });
       if (!result.isQuestion || !result.requiresAnswer) return;
       if (result.confidence < optsRef.current.confidenceThreshold) return;
 
@@ -335,7 +369,7 @@ export function useCopilotSession(opts: Options) {
 
       if (optsRef.current.autoGenerate) void streamAnswer(inserted.id);
     },
-    [segments, sessionId, pushError, streamAnswer],
+    [segments, sessionId, pushError, streamAnswer, patchDiag],
   );
 
   const queueDetection = useCallback(
@@ -365,6 +399,7 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
+      patchDiag({ lastTranscriptSource: source === "remote_meeting" ? "remote_meeting (INTERVIEWER)" : "microphone (ME)" });
       if (source === "remote_meeting") counts.current.remote += 1;
       else counts.current.local += 1;
 
@@ -382,11 +417,11 @@ export function useCopilotSession(opts: Options) {
         if (speaker === "interviewer") queueDetection(result.text, id ?? null);
       });
     },
-    [persistSegment, queueDetection],
+    [persistSegment, queueDetection, patchDiag],
   );
 
   const startStt = useCallback(
-    (source: SourceKind, pcm: PcmSource) => {
+    (source: SourceKind) => {
       const speaker = source === "remote_meeting" ? "interviewer" : "candidate";
       const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
@@ -406,6 +441,11 @@ export function useCopilotSession(opts: Options) {
     [handleResult, pushError],
   );
 
+  // Stable indirection so connect handlers defined above can open an STT socket
+  // when a source is attached after the session is already live.
+  const startSttRef = useRef<((source: SourceKind) => void) | null>(null);
+  startSttRef.current = startStt;
+
   /* ---------------- connect sources ---------------- */
 
   const connectMicrophone = useCallback(
@@ -423,10 +463,12 @@ export function useCopilotSession(opts: Options) {
         const track = stream.getAudioTracks()[0];
         if (!track) throw new Error("No microphone audio track was provided.");
         setMicDeviceLabel(track.label || "Microphone");
+        patchDiag({ micTrackLabel: track.label || "Microphone" });
         track.onended = () => setMicStatus("disconnected");
         const pcm = createPcmSource(stream, (chunk) => micStt.current?.send(chunk));
         micPcm.current = pcm;
         setMicStatus("active");
+        if (liveRef.current && !micStt.current) startSttRef.current?.("microphone");
         return true;
       } catch (error) {
         setMicStatus("error");
@@ -438,7 +480,7 @@ export function useCopilotSession(opts: Options) {
         return false;
       }
     },
-    [pushError],
+    [pushError, patchDiag],
   );
 
   const connectMeetingAudio = useCallback(async () => {
@@ -453,11 +495,16 @@ export function useCopilotSession(opts: Options) {
         } as MediaTrackConstraints,
       });
       const audioTracks = stream.getAudioTracks();
+      patchDiag({
+        meetingTracksReturned: `${stream.getVideoTracks().length} video / ${audioTracks.length} audio` +
+          (audioTracks.length ? ` — "${audioTracks[0]!.label || "unlabelled"}"` : ""),
+        meetingTrackLabel: audioTracks[0]?.label || "none",
+      });
       if (audioTracks.length === 0) {
         stopStream(stream);
         setMeetingStatus("error");
         pushError(
-          "No meeting audio was received. Reconnect, pick the meeting tab, and make sure “Share tab audio” is enabled.",
+          `No meeting audio track was returned by the browser (got ${stream.getVideoTracks().length} video, 0 audio). Reconnect, choose the "Chrome Tab" option with the Google Meet / Zoom tab, and switch on "Also share tab audio" in the picker. Window and entire-screen sharing cannot carry audio in Chrome.`,
         );
         return false;
       }
@@ -476,6 +523,7 @@ export function useCopilotSession(opts: Options) {
       const pcm = createPcmSource(stream, (chunk) => remoteStt_.current?.send(chunk));
       meetingPcm.current = pcm;
       setMeetingStatus("active");
+      if (liveRef.current && !remoteStt_.current) startSttRef.current?.("remote_meeting");
       return true;
     } catch (error) {
       setMeetingStatus("error");
@@ -486,14 +534,15 @@ export function useCopilotSession(opts: Options) {
       );
       return false;
     }
-  }, [pushError]);
+  }, [pushError, patchDiag]);
 
   /* ---------------- lifecycle ---------------- */
 
   const startListening = useCallback(async () => {
-    if (micPcm.current && !micStt.current) startStt("microphone", micPcm.current);
-    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting", meetingPcm.current);
+    if (micPcm.current && !micStt.current) startStt("microphone");
+    if (meetingPcm.current && !remoteStt_.current) startStt("remote_meeting");
     startedAt.current = Date.now();
+    liveRef.current = true;
     setSessionState("listening");
     await supabase
       .from("interview_sessions")
@@ -502,6 +551,8 @@ export function useCopilotSession(opts: Options) {
   }, [startStt, sessionId]);
 
   const pause = useCallback(() => {
+    // Only gates PCM delivery: the two Deepgram sockets stay open, so resuming
+    // never opens a duplicate connection or replays buffered audio.
     micPcm.current?.setPaused(true);
     meetingPcm.current?.setPaused(true);
     setSessionState("paused");
@@ -514,6 +565,7 @@ export function useCopilotSession(opts: Options) {
   }, []);
 
   const teardown = useCallback(() => {
+    liveRef.current = false;
     abortRef.current?.abort();
     if (detectTimer.current) clearTimeout(detectTimer.current);
     micStt.current?.stop();
@@ -614,17 +666,24 @@ export function useCopilotSession(opts: Options) {
   const debug: DebugInfo = useMemo(
     () => ({
       micTrack: micStream.current?.getAudioTracks()[0]?.readyState ?? "none",
+      micTrackLabel: diag.micTrackLabel,
       meetingTrack: meetingStream.current?.getAudioTracks()[0]?.readyState ?? "none",
+      meetingTrackLabel: diag.meetingTrackLabel,
+      meetingTracksReturned: diag.meetingTracksReturned,
       micLevel,
       meetingLevel,
       remoteStt,
       localStt,
       remoteCount: counts.current.remote,
       localCount: counts.current.local,
-      lastConfidence: lastConfidence.current,
+      lastTranscriptSource: diag.lastTranscriptSource,
+      lastQuestion: diag.lastQuestion,
+      lastConfidence: diag.lastConfidence,
+      aiState: diag.aiState,
+      firstTokenMs: diag.firstTokenMs,
       errors,
     }),
-    [micLevel, meetingLevel, remoteStt, localStt, errors],
+    [micLevel, meetingLevel, remoteStt, localStt, errors, diag],
   );
 
   return {

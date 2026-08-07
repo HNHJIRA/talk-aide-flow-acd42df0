@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AudioLevelMeter, StatusDot } from "@/components/copilot/StatusIndicators";
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
+import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { formatDuration, PLATFORM_LABELS } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,12 @@ function LiveSession() {
       if (error) throw error;
       return data;
     },
+  });
+
+  const { data: stt } = useQuery({
+    queryKey: ["stt-diagnostics"],
+    queryFn: () => sttDiagnostics(),
+    staleTime: 60_000,
   });
 
   const copilot = useCopilotSession({
@@ -144,6 +151,13 @@ function LiveSession() {
           <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
         </div>
       </header>
+
+      {stt && stt.problem ? (
+        <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-xs text-warning">
+          Transcription unavailable: {stt.problem}
+          {stt.scopes.length ? ` (current key scopes: ${stt.scopes.join(", ")})` : ""}
+        </div>
+      ) : null}
 
       {errors.length ? (
         <div className="border-b border-destructive/40 bg-destructive/10 px-6 py-2 text-xs text-destructive">
@@ -230,9 +244,32 @@ function LiveSession() {
             </div>
 
             {showDebug ? (
-              <pre className="mt-3 max-h-48 overflow-auto rounded-lg bg-muted p-3 text-[11px] leading-relaxed text-muted-foreground">
-                {JSON.stringify(debug, null, 2)}
-              </pre>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed">
+                {[
+                  ["Mic level", `${Math.round(micLevel * 100)}%`],
+                  ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
+                  ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],
+                  ["Meeting track", `${debug.meetingTrack} · ${debug.meetingTrackLabel}`],
+                  ["Tracks returned by browser", debug.meetingTracksReturned],
+                  ["Deepgram (microphone)", debug.localStt],
+                  ["Deepgram (meeting)", debug.remoteStt],
+                  ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
+                  ["Current transcript source", debug.lastTranscriptSource],
+                  ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
+                  ["Last detected question", debug.lastQuestion || "—"],
+                  ["Question confidence", debug.lastConfidence == null ? "—" : debug.lastConfidence.toFixed(2)],
+                  ["AI generation state", debug.aiState],
+                  ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
+                  ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
+                ].map(([label, value]) => (
+                  <div key={label} className="contents">
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="truncate font-mono text-foreground/90" title={String(value)}>
+                      {String(value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             ) : null}
           </div>
 
