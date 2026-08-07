@@ -88,7 +88,9 @@ export class CompanionBridge {
   private silenceTimer: ReturnType<typeof setInterval> | null = null;
   private lastAudibleAt = 0;
   private wantCapture = false;
+  private paused = false;
   private state: CompanionState = "disconnected";
+
 
   constructor(
     private readonly port: number,
