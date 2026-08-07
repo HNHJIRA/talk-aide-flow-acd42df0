@@ -1,0 +1,46 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0f14;
+  --card: #131a22;
+  --line: #22303d;
+  --text: #e6edf3;
+  --muted: #8ba0b3;
+  --accent: #4ade80;
+  --danger: #f87171;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 13px/1.45 "Segoe UI", -apple-system, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+main { padding: 14px; display: grid; gap: 12px; }
+header h1 { margin: 0; font-size: 15px; letter-spacing: .2px; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.label { color: var(--muted); }
+.value { text-align: right; word-break: break-word; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #52606d; margin-right: 6px; }
+.dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.dot.err { background: var(--danger); }
+.meter { height: 6px; background: #0a1017; border-radius: 4px; overflow: hidden; }
+.meter-fill { height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+.recording { margin: 0; color: var(--accent); font-weight: 600; letter-spacing: .5px; font-size: 11px; }
+.pair-row { display: flex; gap: 8px; }
+input, select, textarea {
+  background: #0a1017; color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 9px; font: inherit; width: 100%;
+}
+select { width: auto; }
+button {
+  background: var(--accent); color: #06210f; border: 0; border-radius: 8px;
+  padding: 8px 12px; font: inherit; font-weight: 600; cursor: pointer;
+}
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+button.wide { width: 100%; }
+.btns { display: flex; gap: 8px; }
+.btns button { flex: 1; }
+.error { margin: 0; color: var(--danger); font-size: 11px; min-height: 14px; }
+textarea { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
