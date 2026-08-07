@@ -3,8 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
 import { SttConnection, type SttState } from "@/lib/stt/stt-connection";
 import { createSttSession, detectQuestion } from "@/lib/copilot.functions";
+import {
+  CompanionBridge,
+  detectCompanion,
+  COMPANION_SAMPLE_RATE,
+  type CompanionFormat,
+  type CompanionHealth,
+  type CompanionState,
+} from "@/lib/companion/companion-client";
 
-export type SourceKind = "microphone" | "remote_meeting";
+/** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
+export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
+
 export type SourceStatus = "disconnected" | "connecting" | "active" | "silent" | "error";
 export type SessionState =
   | "idle"
