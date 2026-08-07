@@ -123,7 +123,7 @@ export function CompanionPanel({
             <Laptop className="size-4 text-primary" /> Zoom Desktop (companion)
           </p>
           <div className="mt-1.5">
-            <StatusDot label={LABEL[state]} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : undefined} />
+            <StatusDot label={LABEL[state]} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : ""} />
           </div>
         </div>
         <div className="flex items-center gap-3">
