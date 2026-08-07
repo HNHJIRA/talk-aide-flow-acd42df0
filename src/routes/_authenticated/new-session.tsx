@@ -119,10 +119,18 @@ function NewSession() {
           </div>
         </section>
 
-        <section className="panel grid gap-4 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Context</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
+        {platform === "zoom_desktop" ? (
+          <div className="panel border-primary/40 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Zoom Desktop needs the InterviewCopilot Companion</p>
+            <p className="mt-1">
+              Browsers cannot record another desktop app's audio. The companion captures Zoom output natively (WASAPI
+              loopback on Windows, ScreenCaptureKit on macOS) and streams it to this session after you pair it. You can
+              pair it in the live room — if it isn't installed, the room falls back to browser tab-audio sharing.
+            </p>
+          </div>
+        ) : null}
+
+
               <Label htmlFor="role">Target role</Label>
               <Input id="role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Senior Backend Engineer" />
             </div>
