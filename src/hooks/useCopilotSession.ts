@@ -613,6 +613,7 @@ export function useCopilotSession(opts: Options) {
       meetingStream.current?.getTracks().forEach((t) => t.stop());
       meetingPcm.current?.stop();
       meetingStream.current = stream;
+      remoteSourceRef.current = "remote_meeting";
       audioTracks[0]!.onended = () => {
         setMeetingStatus("disconnected");
         pushError("Meeting audio sharing was stopped in the browser.");
@@ -632,6 +633,73 @@ export function useCopilotSession(opts: Options) {
       return false;
     }
   }, [pushError, patchDiag]);
+
+  /* ---------------- desktop companion (Zoom Desktop) ---------------- */
+
+  /** Probe the local bridge; returns the health payload or null when not installed. */
+  const refreshCompanion = useCallback(async () => {
+    const health = await detectCompanion();
+    setCompanionHealth(health);
+    if (!health) setCompanionState((prev) => (prev === "capturing" ? prev : "not_installed"));
+    return health;
+  }, []);
+
+  /**
+   * Attach the paired Desktop Companion. Audio only starts flowing after the user
+   * explicitly presses "Connect Zoom Desktop Audio" (startCompanionCapture).
+   */
+  const connectCompanion = useCallback(
+    async (bridgeToken: string, target: "zoom" | "system" = "zoom") => {
+      const health = companionHealth ?? (await refreshCompanion());
+      if (!health) {
+        setCompanionState("not_installed");
+        pushError("InterviewCopilot Companion is not running on this computer.");
+        return false;
+      }
+      companionRef.current?.disconnect();
+      const bridge = new CompanionBridge(health.port, bridgeToken, target, {
+        onState: (state, detail) => {
+          setCompanionState(state);
+          if (state === "capturing") {
+            remoteSourceRef.current = "zoom_desktop";
+            setMeetingStatus("active");
+            if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+          }
+          if (state === "silent") setMeetingStatus("silent");
+          if (state === "stopped" || state === "disconnected") setMeetingStatus("disconnected");
+          if (state === "error" && detail) {
+            setMeetingStatus("error");
+            patchDiag({ lastCaptureError: detail });
+            pushError(detail);
+          }
+        },
+        onLevel: (level) => setCompanionLevel(level),
+        onFormat: (format) => setCompanionFormat(format),
+        onPcm: (chunk) => remoteStt_.current?.send(chunk),
+      });
+      companionRef.current = bridge;
+      bridge.connect();
+      return true;
+    },
+    [companionHealth, refreshCompanion, pushError, patchDiag],
+  );
+
+  /** Explicit user action — the companion never captures silently. */
+  const startCompanionCapture = useCallback(() => {
+    if (!companionRef.current) {
+      pushError("Pair the Desktop Companion first.");
+      return;
+    }
+    remoteSourceRef.current = "zoom_desktop";
+    companionRef.current.startCapture();
+    if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+  }, [pushError]);
+
+  const stopCompanionCapture = useCallback(() => {
+    companionRef.current?.stopCapture();
+    setMeetingStatus("disconnected");
+  }, []);
+
 
   /* ---------------- lifecycle ---------------- */
 
