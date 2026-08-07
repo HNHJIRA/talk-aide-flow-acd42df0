@@ -328,11 +328,19 @@ function LiveSession() {
                   ["Meeting track", `${debug.meetingTrack} · ${debug.meetingTrackLabel}`],
                   ["Tracks returned by browser", debug.meetingTracksReturned],
                   ["Deepgram (microphone)", debug.localStt],
-                  ["Deepgram (meeting)", debug.remoteStt],
+                  ["Deepgram (interviewer)", debug.remoteStt],
                   ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
                   ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
                   ["Microphone role", debug.micRole],
                   ["Detection sources", debug.detectionSources],
+                  ["Companion state", debug.companionState],
+                  ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
+                  ["Companion capture backend", debug.companionBackend],
+                  ["Interviewer capture method", debug.remoteCaptureMethod],
+                  ["Interviewer source detected", debug.remoteSourceDetected],
+                  ["Capture format", `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`],
+                  ["Echo/duplicate segments dropped", String(debug.echoSuppressed)],
+                  ["Last capture error", debug.lastCaptureError],
                   ["Current transcript source", debug.lastTranscriptSource],
                   ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
                   ["Last detected question", debug.lastQuestion || "—"],
@@ -340,6 +348,7 @@ function LiveSession() {
                   ["AI generation state", debug.aiState],
                   ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
                   ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
+
                 ].map(([label, value]) => (
                   <div key={label} className="contents">
                     <dt className="text-muted-foreground">{label}</dt>
