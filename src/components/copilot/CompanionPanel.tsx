@@ -3,6 +3,7 @@ import { Laptop, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AudioLevelMeter, StatusDot } from "@/components/copilot/StatusIndicators";
+import { CompanionRequiredCard } from "@/components/download/MacDownloadButton";
 import { createCompanionPairing, getCompanionPairing } from "@/lib/companion.functions";
 import type { CompanionHealth, CompanionState } from "@/lib/companion/companion-client";
 
@@ -162,10 +163,9 @@ export function CompanionPanel({
       </div>
 
       {!health ? (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Browsers cannot record another desktop app. Install the companion (Windows: WASAPI loopback, macOS:
-          ScreenCaptureKit) to capture Zoom Desktop audio, or fall back to sharing a browser tab.
-        </p>
+        <div className="mt-3">
+          <CompanionRequiredCard onCheckAgain={() => void onRefresh()} />
+        </div>
       ) : null}
       {state === "silent" ? (
         <p className="mt-2 text-xs text-warning">

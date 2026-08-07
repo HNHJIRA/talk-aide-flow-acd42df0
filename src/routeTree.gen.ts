@@ -12,14 +12,17 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as DownloadRouteImport } from './routes/download'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedDocumentsRouteImport } from './routes/_authenticated/documents'
 import { Route as AuthenticatedNewSessionRouteImport } from './routes/_authenticated/new-session'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as ApiAnswerStreamRouteImport } from './routes/api/answer-stream'
+import { Route as AuthenticatedAdminDesktopReleasesRouteImport } from './routes/_authenticated/admin/desktop-releases'
 import { Route as AuthenticatedHistoryIndexRouteImport } from './routes/_authenticated/history.index'
 import { Route as AuthenticatedHistorySessionIdRouteImport } from './routes/_authenticated/history.$sessionId'
 import { Route as AuthenticatedSessionSessionIdRouteImport } from './routes/_authenticated/session.$sessionId'
+import { Route as ApiPublicDesktopReleaseRouteImport } from './routes/api/public/desktop-release'
 import { Route as ApiPublicCompanionPairRouteImport } from './routes/api/public/companion/pair'
 
 const IndexRoute = IndexRouteImport.update({
@@ -34,6 +37,11 @@ const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadRoute = DownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -61,6 +69,12 @@ const ApiAnswerStreamRoute = ApiAnswerStreamRouteImport.update({
   path: '/api/answer-stream',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedAdminDesktopReleasesRoute =
+  AuthenticatedAdminDesktopReleasesRouteImport.update({
+    id: '/admin/desktop-releases',
+    path: '/admin/desktop-releases',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedHistoryIndexRoute =
   AuthenticatedHistoryIndexRouteImport.update({
     id: '/history/',
@@ -79,6 +93,11 @@ const AuthenticatedSessionSessionIdRoute =
     path: '/session/$sessionId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const ApiPublicDesktopReleaseRoute = ApiPublicDesktopReleaseRouteImport.update({
+  id: '/api/public/desktop-release',
+  path: '/api/public/desktop-release',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicCompanionPairRoute = ApiPublicCompanionPairRouteImport.update({
   id: '/api/public/companion/pair',
   path: '/api/public/companion/pair',
@@ -88,26 +107,32 @@ const ApiPublicCompanionPairRoute = ApiPublicCompanionPairRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/download': typeof DownloadRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
   '/new-session': typeof AuthenticatedNewSessionRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
+  '/api/public/desktop-release': typeof ApiPublicDesktopReleaseRoute
   '/history/': typeof AuthenticatedHistoryIndexRoute
   '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/download': typeof DownloadRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
   '/new-session': typeof AuthenticatedNewSessionRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
+  '/api/public/desktop-release': typeof ApiPublicDesktopReleaseRoute
   '/history': typeof AuthenticatedHistoryIndexRoute
   '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
@@ -116,13 +141,16 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/download': typeof DownloadRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/documents': typeof AuthenticatedDocumentsRoute
   '/_authenticated/new-session': typeof AuthenticatedNewSessionRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/_authenticated/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/_authenticated/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/_authenticated/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
+  '/api/public/desktop-release': typeof ApiPublicDesktopReleaseRoute
   '/_authenticated/history/': typeof AuthenticatedHistoryIndexRoute
   '/api/public/companion/pair': typeof ApiPublicCompanionPairRoute
 }
@@ -131,26 +159,32 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/download'
     | '/dashboard'
     | '/documents'
     | '/new-session'
     | '/settings'
     | '/api/answer-stream'
+    | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
+    | '/api/public/desktop-release'
     | '/history/'
     | '/api/public/companion/pair'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
+    | '/download'
     | '/dashboard'
     | '/documents'
     | '/new-session'
     | '/settings'
     | '/api/answer-stream'
+    | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
+    | '/api/public/desktop-release'
     | '/history'
     | '/api/public/companion/pair'
   id:
@@ -158,13 +192,16 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/download'
     | '/_authenticated/dashboard'
     | '/_authenticated/documents'
     | '/_authenticated/new-session'
     | '/_authenticated/settings'
     | '/api/answer-stream'
+    | '/_authenticated/admin/desktop-releases'
     | '/_authenticated/history/$sessionId'
     | '/_authenticated/session/$sessionId'
+    | '/api/public/desktop-release'
     | '/_authenticated/history/'
     | '/api/public/companion/pair'
   fileRoutesById: FileRoutesById
@@ -173,7 +210,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  DownloadRoute: typeof DownloadRoute
   ApiAnswerStreamRoute: typeof ApiAnswerStreamRoute
+  ApiPublicDesktopReleaseRoute: typeof ApiPublicDesktopReleaseRoute
   ApiPublicCompanionPairRoute: typeof ApiPublicCompanionPairRoute
 }
 
@@ -198,6 +237,13 @@ declare module '@tanstack/react-router' {
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download': {
+      id: '/download'
+      path: '/download'
+      fullPath: '/download'
+      preLoaderRoute: typeof DownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/dashboard': {
@@ -235,6 +281,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAnswerStreamRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/admin/desktop-releases': {
+      id: '/_authenticated/admin/desktop-releases'
+      path: '/admin/desktop-releases'
+      fullPath: '/admin/desktop-releases'
+      preLoaderRoute: typeof AuthenticatedAdminDesktopReleasesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/history/': {
       id: '/_authenticated/history/'
       path: '/history'
@@ -256,6 +309,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSessionSessionIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/desktop-release': {
+      id: '/api/public/desktop-release'
+      path: '/api/public/desktop-release'
+      fullPath: '/api/public/desktop-release'
+      preLoaderRoute: typeof ApiPublicDesktopReleaseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/companion/pair': {
       id: '/api/public/companion/pair'
       path: '/api/public/companion/pair'
@@ -271,6 +331,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedDocumentsRoute: typeof AuthenticatedDocumentsRoute
   AuthenticatedNewSessionRoute: typeof AuthenticatedNewSessionRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedAdminDesktopReleasesRoute: typeof AuthenticatedAdminDesktopReleasesRoute
   AuthenticatedHistorySessionIdRoute: typeof AuthenticatedHistorySessionIdRoute
   AuthenticatedSessionSessionIdRoute: typeof AuthenticatedSessionSessionIdRoute
   AuthenticatedHistoryIndexRoute: typeof AuthenticatedHistoryIndexRoute
@@ -281,6 +342,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDocumentsRoute: AuthenticatedDocumentsRoute,
   AuthenticatedNewSessionRoute: AuthenticatedNewSessionRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedAdminDesktopReleasesRoute:
+    AuthenticatedAdminDesktopReleasesRoute,
   AuthenticatedHistorySessionIdRoute: AuthenticatedHistorySessionIdRoute,
   AuthenticatedSessionSessionIdRoute: AuthenticatedSessionSessionIdRoute,
   AuthenticatedHistoryIndexRoute: AuthenticatedHistoryIndexRoute,
@@ -293,19 +356,11 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  DownloadRoute: DownloadRoute,
   ApiAnswerStreamRoute: ApiAnswerStreamRoute,
+  ApiPublicDesktopReleaseRoute: ApiPublicDesktopReleaseRoute,
   ApiPublicCompanionPairRoute: ApiPublicCompanionPairRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
