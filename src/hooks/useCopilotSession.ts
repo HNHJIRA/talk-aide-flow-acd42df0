@@ -137,14 +137,22 @@ export function useCopilotSession(opts: Options) {
   const [localStt, setLocalStt] = useState<SttState>("idle");
   const [remoteStt, setRemoteStt] = useState<SttState>("idle");
   const [segments, setSegments] = useState<Segment[]>([]);
-  const [interim, setInterim] = useState<{ microphone: string; remote_meeting: string }>({
+  const [interim, setInterim] = useState<{ microphone: string; remote_meeting: string; zoom_desktop: string }>({
     microphone: "",
     remote_meeting: "",
+    zoom_desktop: "",
   });
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [online, setOnline] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+
+  /* --- desktop companion --- */
+  const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
+  const [companionState, setCompanionState] = useState<CompanionState>("disconnected");
+  const [companionLevel, setCompanionLevel] = useState(0);
+  const [companionFormat, setCompanionFormat] = useState<CompanionFormat | null>(null);
+  const companionRef = useRef<CompanionBridge | null>(null);
 
   const micStream = useRef<MediaStream | null>(null);
   const meetingStream = useRef<MediaStream | null>(null);
@@ -158,9 +166,10 @@ export function useCopilotSession(opts: Options) {
   const detectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentQuestions = useRef<{ norm: string; at: number }[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const counts = useRef({ remote: 0, local: 0 });
+  const counts = useRef({ remote: 0, local: 0, echo: 0 });
   const liveRef = useRef(false);
   const lastConfidence = useRef<number | null>(null);
+  const recentMicFinals = useRef<{ norm: string; at: number }[]>([]);
   const [diag, setDiag] = useState({
     lastTranscriptSource: "none",
     lastQuestion: "",
@@ -170,12 +179,14 @@ export function useCopilotSession(opts: Options) {
     meetingTracksReturned: "not requested",
     micTrackLabel: "none",
     meetingTrackLabel: "none",
+    lastCaptureError: "none",
   });
   const lastMicSegment = useRef<{ text: string; id: string | null } | null>(null);
   const patchDiag = useCallback(
     (patch: Partial<typeof diag>) => setDiag((prev) => ({ ...prev, ...patch })),
     [],
   );
+
 
 
   const pushError = useCallback((message: string) => {
