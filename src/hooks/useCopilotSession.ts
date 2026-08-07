@@ -15,10 +15,13 @@ export type SessionState =
   | "completed"
   | "error";
 
+export type MicMode = "candidate" | "test" | "fallback";
+export type Speaker = "interviewer" | "candidate" | "test";
+
 export type Segment = {
   id: string;
   source: SourceKind;
-  speaker: "interviewer" | "candidate";
+  speaker: Speaker;
   text: string;
   isFinal: boolean;
   at: number;
@@ -53,6 +56,9 @@ export type DebugInfo = {
   lastConfidence: number | null;
   aiState: string;
   firstTokenMs: number | null;
+  micMode: MicMode;
+  micRole: string;
+  detectionSources: string;
   errors: string[];
 };
 
@@ -83,6 +89,14 @@ type Options = {
   autoDetect: boolean;
   autoGenerate: boolean;
   confidenceThreshold: number;
+  /**
+   * How microphone speech is treated.
+   * - "candidate" (production dual-source): mic = CANDIDATE, never triggers detection.
+   * - "test" (STT Test Mode): mic = TEST AUDIO, may trigger detection for validation.
+   * - "fallback": mic-only user; detection only when fallbackAutoDetect is on or promoted manually.
+   */
+  micMode: MicMode;
+  fallbackAutoDetect: boolean;
   micConstraints: { echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean };
 };
 
@@ -134,6 +148,7 @@ export function useCopilotSession(opts: Options) {
     micTrackLabel: "none",
     meetingTrackLabel: "none",
   });
+  const lastMicSegment = useRef<{ text: string; id: string | null } | null>(null);
   const patchDiag = useCallback(
     (patch: Partial<typeof diag>) => setDiag((prev) => ({ ...prev, ...patch })),
     [],
@@ -310,7 +325,7 @@ export function useCopilotSession(opts: Options) {
 
       const recentContext = segments
         .slice(-8)
-        .map((s) => `${s.speaker === "interviewer" ? "INTERVIEWER" : "CANDIDATE"}: ${s.text}`)
+        .map((s) => `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`)
         .join("\n");
 
       let result;
@@ -391,7 +406,7 @@ export function useCopilotSession(opts: Options) {
   const handleResult = useCallback(
     (
       source: SourceKind,
-      speaker: "interviewer" | "candidate",
+      speaker: Speaker,
       result: { text: string; isFinal: boolean; confidence: number | null; startMs: number | null; endMs: number | null },
     ) => {
       if (!result.isFinal) {
@@ -399,7 +414,14 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
-      patchDiag({ lastTranscriptSource: source === "remote_meeting" ? "remote_meeting (INTERVIEWER)" : "microphone (ME)" });
+      patchDiag({
+        lastTranscriptSource:
+          source === "remote_meeting"
+            ? "remote_meeting (INTERVIEWER)"
+            : speaker === "test"
+              ? "microphone (TEST AUDIO / single source)"
+              : "microphone (ME / CANDIDATE)",
+      });
       if (source === "remote_meeting") counts.current.remote += 1;
       else counts.current.local += 1;
 
@@ -414,7 +436,16 @@ export function useCopilotSession(opts: Options) {
       setSegments((prev) => [...prev.slice(-400), segment]);
 
       void persistSegment(segment, result.confidence, result.startMs, result.endMs).then((id) => {
-        if (speaker === "interviewer") queueDetection(result.text, id ?? null);
+        if (source === "microphone") lastMicSegment.current = { text: result.text, id: id ?? null };
+        // Production rule: only the remote meeting (INTERVIEWER) stream can auto-trigger
+        // question detection. Microphone speech is CANDIDATE and never fires the pipeline,
+        // except in explicit STT Test Mode or opt-in mic-only fallback auto-detection.
+        const mode = optsRef.current.micMode;
+        const eligible =
+          source === "remote_meeting" ||
+          mode === "test" ||
+          (mode === "fallback" && optsRef.current.fallbackAutoDetect);
+        if (eligible) queueDetection(result.text, id ?? null);
       });
     },
     [persistSegment, queueDetection, patchDiag],
@@ -422,12 +453,20 @@ export function useCopilotSession(opts: Options) {
 
   const startStt = useCallback(
     (source: SourceKind) => {
-      const speaker = source === "remote_meeting" ? "interviewer" : "candidate";
       const setState = source === "remote_meeting" ? setRemoteStt : setLocalStt;
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
-        onResult: (result) => handleResult(source, speaker, result),
+        onResult: (result) =>
+          handleResult(
+            source,
+            source === "remote_meeting"
+              ? "interviewer"
+              : optsRef.current.micMode === "test"
+                ? "test"
+                : "candidate",
+            result,
+          ),
         onState: (state, detail) => {
           setState(state);
           if (state === "error" && detail) pushError(detail);
@@ -623,6 +662,16 @@ export function useCopilotSession(opts: Options) {
     }
   }, [questions]);
 
+  /** Mic-only fallback: explicitly treat the last microphone utterance as an interviewer question. */
+  const promoteLastMicSegment = useCallback(async () => {
+    const last = lastMicSegment.current;
+    if (!last) {
+      pushError("No microphone transcript to promote yet.");
+      return;
+    }
+    await runDetection(last.text, last.id);
+  }, [runDetection, pushError]);
+
   const manualQuestion = useCallback(
     async (text: string) => {
       await runDetection(text, null);
@@ -681,9 +730,22 @@ export function useCopilotSession(opts: Options) {
       lastConfidence: diag.lastConfidence,
       aiState: diag.aiState,
       firstTokenMs: diag.firstTokenMs,
+      micMode: opts.micMode,
+      micRole:
+        opts.micMode === "test"
+          ? "TEST AUDIO (single source)"
+          : opts.micMode === "fallback"
+            ? "CANDIDATE (mic-only fallback)"
+            : "CANDIDATE (ME)",
+      detectionSources:
+        opts.micMode === "test"
+          ? "microphone (test mode) + meeting"
+          : opts.micMode === "fallback" && opts.fallbackAutoDetect
+            ? "microphone (fallback auto-detect) + meeting"
+            : "meeting/interviewer only",
       errors,
     }),
-    [micLevel, meetingLevel, remoteStt, localStt, errors, diag],
+    [micLevel, meetingLevel, remoteStt, localStt, errors, diag, opts.micMode, opts.fallbackAutoDetect],
   );
 
   return {
@@ -712,5 +774,6 @@ export function useCopilotSession(opts: Options) {
     regenerate,
     togglePin,
     manualQuestion,
+    promoteLastMicSegment,
   };
 }
