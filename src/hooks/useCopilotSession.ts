@@ -69,8 +69,21 @@ export type DebugInfo = {
   micMode: MicMode;
   micRole: string;
   detectionSources: string;
+  /* --- desktop companion / Zoom Desktop --- */
+  companionState: CompanionState;
+  companionVersion: string;
+  companionOs: string;
+  companionBackend: string;
+  remoteCaptureMethod: string;
+  remoteSourceDetected: string;
+  remoteSampleRate: string;
+  remoteChannels: string;
+  processedSampleRate: string;
+  echoSuppressed: number;
+  lastCaptureError: string;
   errors: string[];
 };
+
 
 
 const normalize = (text: string) =>
