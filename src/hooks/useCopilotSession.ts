@@ -309,7 +309,16 @@ export function useCopilotSession(opts: Options) {
     timer: TurnTimer;
     status: TurnStatus;
     text: string;
+    /** Every finalised STT segment that belongs to this logical turn. */
+    segments: string[];
+    /** How many times Deepgram Flux told us the turn kept going. */
+    resumedCount: number;
+    /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
+    turnIndex: number | null;
+    /** One turn id produces at most one automatic answer. */
+    answered: boolean;
     segmentId: string | null;
+
     contextKey: string | null;
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
