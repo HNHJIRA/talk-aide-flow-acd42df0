@@ -1155,11 +1155,15 @@ export function useCopilotSession(opts: Options) {
     startedAt.current = Date.now();
     liveRef.current = true;
     setSessionState("listening");
+    // Warm session + resume caches server-side so the first question of the
+    // interview is as fast as the tenth. Never blocks going live.
+    void primeLiveContext({ data: { sessionId } }).catch(() => undefined);
     await supabase
       .from("interview_sessions")
       .update({ status: "listening", started_at: new Date().toISOString() })
       .eq("id", sessionId);
   }, [startStt, sessionId]);
+
 
   const pause = useCallback(() => {
     // Only gates PCM delivery: the two Deepgram sockets stay open, so resuming
