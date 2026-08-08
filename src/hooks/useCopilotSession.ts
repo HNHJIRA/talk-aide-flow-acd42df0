@@ -1396,6 +1396,7 @@ export function useCopilotSession(opts: Options) {
       companionHealth,
       companionFormat,
       meetingStatus,
+      sttProfile,
     ],
   );
 
@@ -1415,6 +1416,8 @@ export function useCopilotSession(opts: Options) {
     online,
     elapsed,
     debug,
+    latency,
+    latencyHistory,
     companionHealth,
     companionState,
     connectMicrophone,
