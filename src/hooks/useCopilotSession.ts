@@ -1003,7 +1003,7 @@ export function useCopilotSession(opts: Options) {
               turn.spec.aborted = true;
               turn.spec.controller.abort();
               turn.spec = null;
-              turn.timer.speculativeAborted = true;
+              turn.timer.speculativeCancelled = true;
               turn.status = "listening";
             }
           }
