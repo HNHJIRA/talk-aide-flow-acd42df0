@@ -97,6 +97,16 @@ export type DebugInfo = {
   specAborted: number;
   gateRejected: number;
   classifierCalls: number;
+  /* --- interviewer turn assembly --- */
+  turnId: string;
+  turnSegments: number;
+  turnAssembled: string;
+  segmentsMerged: number;
+  turnsResumed: number;
+  graceHolds: number;
+  duplicateAnswersBlocked: number;
+  lastContinuationReason: string;
+
 
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
