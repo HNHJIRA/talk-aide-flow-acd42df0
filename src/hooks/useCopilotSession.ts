@@ -1986,6 +1986,7 @@ export function useCopilotSession(opts: Options) {
       meetingStatus,
       sttProfile,
       turnView,
+      turnSilenceMs,
     ],
   );
 
