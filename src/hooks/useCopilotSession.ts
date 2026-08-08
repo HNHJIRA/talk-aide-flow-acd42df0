@@ -8,7 +8,14 @@ import {
   type SttProfile,
 } from "@/lib/stt/stt-connection";
 import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
-import { TurnTimer, EMPTY_WATERFALL, type LatencyWaterfall, type TurnStatus } from "@/lib/latency";
+import {
+  TurnTimer,
+  EMPTY_WATERFALL,
+  type LatencyWaterfall,
+  type LiveCallMeta,
+  type TurnStatus,
+} from "@/lib/latency";
+
 import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
 
 import {
