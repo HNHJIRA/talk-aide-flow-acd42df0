@@ -130,6 +130,60 @@ export function fastQuestionGate(rawText: string): GateVerdict {
   return { decision: "ambiguous", question: text, category: "general", confidence: 0.4, reason: "unclear" };
 }
 
+/**
+ * Continuation guard.
+ *
+ * A "final" STT segment only means that chunk of transcription is stable — not
+ * that the speaker finished. These rules detect utterances that are clearly
+ * mid-sentence so the interviewer turn stays open instead of committing a
+ * half question.
+ */
+const DANGLING = new Set([
+  "and", "or", "but", "because", "so", "then", "with", "for", "to", "about", "of",
+  "in", "on", "at", "from", "into", "as", "if", "when", "while", "how", "what",
+  "which", "that", "the", "a", "an", "is", "are", "was", "were", "do", "does",
+  "did", "will", "would", "can", "could", "should", "your", "our", "their", "my",
+  "you", "we", "they", "going", "gonna", "like", "just", "also", "very", "us",
+]);
+
+const DANGLING_PHRASES = [
+  /\bgoing to$/,
+  /\bwant to$/,
+  /\btell me about$/,
+  /\bexperience with$/,
+  /\bhow (would|will|do|did) you$/,
+  /\bwanted to ask (is|about)?$/,
+  /\bthe main thing$/,
+  /\bwhat (was|is) (your|the)$/,
+  /\bcan you (tell|walk|explain)$/,
+];
+
+export type ContinuationVerdict = { incomplete: boolean; reason: string };
+
+export function continuationVerdict(rawText: string): ContinuationVerdict {
+  const text = clean(rawText);
+  const norm = normalize(text);
+  if (!norm) return { incomplete: false, reason: "empty" };
+  const words = norm.split(" ");
+  const last = words[words.length - 1] ?? "";
+
+  // Terminal punctuation from smart formatting is a strong completion signal.
+  if (/[?!]\s*$/.test(text)) return { incomplete: false, reason: "terminal punctuation" };
+
+  if (DANGLING.has(last)) return { incomplete: true, reason: `dangling word "${last}"` };
+  for (const re of DANGLING_PHRASES) {
+    if (re.test(norm)) return { incomplete: true, reason: "unfinished construction" };
+  }
+  if (/[,;:]\s*$/.test(text)) return { incomplete: true, reason: "trailing comma" };
+  if (/\.\s*$/.test(text)) return { incomplete: false, reason: "full stop" };
+
+  // No punctuation at all and no interrogative shape: could be mid-thought.
+  if (words.length >= 3 && fastQuestionGate(text).decision === "ambiguous") {
+    return { incomplete: true, reason: "no completion signal" };
+  }
+  return { incomplete: false, reason: "looks complete" };
+}
+
 /** Is a partial interim already substantive enough to prefetch resume context for? */
 export function isPrefetchWorthy(interimText: string) {
   const norm = normalize(interimText);
@@ -138,6 +192,7 @@ export function isPrefetchWorthy(interimText: string) {
   const verdict = fastQuestionGate(interimText);
   return verdict.decision !== "reject";
 }
+
 
 /** Topic keywords used to warm the retrieval cache from unstable interim text. */
 export function topicTerms(text: string) {
