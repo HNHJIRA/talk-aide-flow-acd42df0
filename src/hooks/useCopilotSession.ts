@@ -1085,12 +1085,17 @@ export function useCopilotSession(opts: Options) {
    * only ambiguous utterances pay for the AI classifier round trip.
    */
   const decideTurn = useCallback(
-    async (turn: Turn) => {
-      const text = turn.text.trim();
+    async (turn: Turn, opts: { hard?: boolean } = {}) => {
+      clearTurnTimers(turn);
+      // The hard deadline can fire before any final arrived: fall back to the
+      // last interim rather than losing the question entirely.
+      const text = (turn.text.trim() || (opts.hard ? turn.lastInterim.trim() : "")).trim();
       if (!text || text.length < 6) {
         turn.status = "completed";
         return;
       }
+      turn.hardCommitted = opts.hard === true;
+
 
       turn.timer.mark("gateStart");
       const verdict = fastQuestionGate(text);
