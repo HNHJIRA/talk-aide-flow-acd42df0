@@ -78,7 +78,7 @@ export function LatencyWaterfallPanel({
         <Row label="Token → painted" value={ms(latency.browserRenderMs)} />
         <Row label="Speech end → first token on screen" value={ms(latency.totalMs)} />
         <Row label="Speech end → answer complete" value={ms(latency.completeMs)} />
-        <Row label="Median of last {n} turns".replace("{n}", String(measured.length)) value={ms(median)} />
+        <Row label={`Median of last ${measured.length} turns`} value={ms(median)} />
       </dl>
 
       {history.length > 1 ? (
