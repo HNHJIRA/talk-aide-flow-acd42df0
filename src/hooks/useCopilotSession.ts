@@ -1316,8 +1316,18 @@ export function useCopilotSession(opts: Options) {
               turn.spec = null;
               turn.timer.speculativeCancelled = true;
             }
-            if (!turn.answered) turn.status = "listening";
-            setTurnView((prev) => ({ ...prev, continuation: "turn resumed — still listening" }));
+            if (!turn.answered) {
+              turn.status = "listening";
+              // Speech resumed: the silence deadline restarts from now, it is
+              // never removed.
+              turn.lastSpeechAt = performance.now();
+              armHardCommit(turn);
+            }
+            setTurnView((prev) => ({
+              ...prev,
+              stage: "A — turn resumed",
+              continuation: "turn resumed — still listening",
+            }));
           }
           return;
         }
