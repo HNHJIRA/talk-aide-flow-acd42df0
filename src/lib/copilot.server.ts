@@ -455,5 +455,3 @@ export function liveAnswerBody(
   if (cfg.serviceTier) body["service_tier"] = cfg.serviceTier;
   return body;
 }
-
-}
