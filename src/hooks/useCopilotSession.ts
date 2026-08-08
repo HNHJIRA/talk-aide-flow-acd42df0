@@ -538,6 +538,10 @@ export function useCopilotSession(opts: Options) {
     ) => {
       const speculative = opts.speculative === true;
       const controller = new AbortController();
+      // Anything produced for an older revision of this turn is stale the moment
+      // a late continuation revises the question.
+      const rev = turn.revision;
+      const stale = () => turn.revision !== rev;
       if (speculative) {
         turn.spec = {
           question: questionText,
