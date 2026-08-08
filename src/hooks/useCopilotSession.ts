@@ -342,14 +342,30 @@ export function useCopilotSession(opts: Options) {
     resumedCount: number;
     /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
     turnIndex: number | null;
-    /** One turn id produces at most one automatic answer. */
+    /** One turn id + revision produces at most one automatic answer. */
     answered: boolean;
     segmentId: string | null;
+    /** Bumped when a late continuation reopens an already-committed turn. */
+    revision: number;
+    /** performance.now() of the last time we heard voice on this turn. */
+    lastSpeechAt: number;
+    /** Last interim text, used when the hard deadline fires before any final. */
+    lastInterim: string;
+    /** performance.now() when this turn produced an answer. */
+    committedAt: number | null;
+    /** Committed by the silence deadline rather than by a complete sentence. */
+    hardCommitted: boolean;
+    /** In-flight confirmed answer request, aborted when the turn is revised. */
+    answerController: AbortController | null;
 
     contextKey: string | null;
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
     decideTimer: ReturnType<typeof setTimeout> | null;
+    /** Stage C: fires even when the utterance still looks unfinished. */
+    hardTimer: ReturnType<typeof setTimeout> | null;
+    /** Stage B: start speculation while still waiting for more speech. */
+    specTimer: ReturnType<typeof setTimeout> | null;
     /* --- speculative generation (started on eager end-of-turn) --- */
     spec: {
       question: string;
