@@ -534,9 +534,10 @@ export function useCopilotSession(opts: Options) {
           }),
         });
         timer.mark("aiResponseHeaders");
-        const serverMs = Number(res.headers.get("X-IC-Server-Ms") ?? "");
-        if (!Number.isNaN(serverMs)) timer.serverTtftMs = serverMs;
+        const preludeMs = Number(res.headers.get("X-IC-Prelude-Ms") ?? "");
+        if (!Number.isNaN(preludeMs)) timer.serverTtftMs = preludeMs;
         if (res.headers.get("X-IC-Context") === "hit") timer.contextPrefetch = "hit";
+
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
