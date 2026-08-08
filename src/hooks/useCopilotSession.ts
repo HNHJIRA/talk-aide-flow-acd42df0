@@ -9,7 +9,7 @@ import {
 } from "@/lib/stt/stt-connection";
 import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
 import { TurnTimer, EMPTY_WATERFALL, type LatencyWaterfall, type TurnStatus } from "@/lib/latency";
-import { fastQuestionGate, isPrefetchWorthy, prefetchTopic } from "@/lib/question-gate";
+import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
 
 import {
   CompanionBridge,
@@ -330,7 +330,7 @@ export function useCopilotSession(opts: Options) {
     (turn: Turn, interimText: string) => {
       if (prefetchDebounce.current) clearTimeout(prefetchDebounce.current);
       prefetchDebounce.current = setTimeout(() => {
-        const topic = prefetchTopic(interimText);
+        const topic = topicTerms(interimText) || interimText.slice(0, 120);
         if (!isPrefetchWorthy(interimText)) return;
         if (turn.prefetchTopic === topic) return;
         turn.prefetchTopic = topic;
