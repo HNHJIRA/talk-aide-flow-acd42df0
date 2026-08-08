@@ -23,9 +23,11 @@ export type LatencyMark =
   | "contextDone"
   | "aiRequestStart"
   | "aiResponseHeaders"
+  | "streamOpen"
   | "aiFirstToken"
   | "aiFirstRender"
   | "aiComplete";
+
 
 export type TurnStatus =
   | "listening"
@@ -56,13 +58,20 @@ export type LatencyWaterfall = {
   speculative: boolean;
   speculativeReused: boolean;
   speculativeCancelled: boolean;
-  /** ms the AI request ran before the confirmed end of turn. */
+  /** ms the AI request ran before the confirmed end of turn (client clock). */
   headStartMs: number | null;
+  /** ms the PROVIDER was already generating before the confirmed end of turn. */
+  providerHeadStartMs: number | null;
+  /** aiRequestStart -> first byte of the SSE prelude (pure transport + server prelude). */
+  streamOpenMs: number | null;
+  /** first upstream byte forwarded by the server -> first token seen by the browser. */
+  transportOverheadMs: number | null;
   /** characters already generated (and hidden) at confirmation. */
   bufferedCharsAtConfirm: number | null;
   /** confirmed end of turn -> first visible token. This is the felt latency. */
   visibleAfterConfirmMs: number | null;
 };
+
 
 
 const diff = (a: number | undefined, b: number | undefined) =>
@@ -73,13 +82,16 @@ export class TurnTimer {
   readonly marks: TurnTimings = {};
   classifierUsed = false;
   contextPrefetch: "hit" | "miss" | "none" = "none";
-  /** Server-reported ms spent between request arrival and first upstream token. */
+  /** Server ms from request arrival to the first upstream byte forwarded. */
   serverTtftMs: number | null = null;
+  /** Server ms from request arrival to the gateway request being dispatched. */
+  serverDispatchMs: number | null = null;
   /* --- speculative generation --- */
   speculative = false;
   speculativeReused = false;
   speculativeCancelled = false;
   bufferedCharsAtConfirm: number | null = null;
+
 
   constructor(turnId: string) {
     this.turnId = turnId;
@@ -121,11 +133,21 @@ export class TurnTimer {
       speculativeReused: this.speculativeReused,
       speculativeCancelled: this.speculativeCancelled,
       headStartMs: diff(m.aiRequestStart, m.sttFinal),
+      providerHeadStartMs:
+        this.serverDispatchMs != null && m.aiRequestStart != null && m.sttFinal != null
+          ? Math.round(m.sttFinal - m.aiRequestStart - this.serverDispatchMs)
+          : null,
+      streamOpenMs: diff(m.aiRequestStart, m.streamOpen),
+      transportOverheadMs:
+        this.serverTtftMs != null && m.aiRequestStart != null && m.aiFirstToken != null
+          ? Math.max(0, Math.round(m.aiFirstToken - m.aiRequestStart - this.serverTtftMs))
+          : null,
       bufferedCharsAtConfirm: this.bufferedCharsAtConfirm,
       visibleAfterConfirmMs: diff(m.sttFinal, m.aiFirstRender),
     };
   }
 }
+
 
 export const EMPTY_WATERFALL: LatencyWaterfall = {
   turnId: "—",
@@ -146,15 +168,35 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
   speculativeReused: false,
   speculativeCancelled: false,
   headStartMs: null,
+  providerHeadStartMs: null,
+  streamOpenMs: null,
+  transportOverheadMs: null,
   bufferedCharsAtConfirm: null,
   visibleAfterConfirmMs: null,
+
 };
 
 
 export const ms = (value: number | null) => (value == null ? "—" : `${value} ms`);
 
+/** Server-side phase breakdown of one live request, ms from request arrival. */
+export type LivePhaseMeta = {
+  authMs: number;
+  authCached: boolean;
+  sessionMs: number;
+  contextMs: number;
+  contextSource: string;
+  promptMs: number;
+  preludeMs?: number;
+  dispatchMs?: number;
+  headersMs?: number;
+  firstForwardMs?: number | null;
+};
+
 /** Server-reported configuration and usage for one live AI answer call. */
 export type LiveCallMeta = {
+  phases?: LivePhaseMeta;
+
   requestedModel: string;
   actualModel: string | null;
   provider?: string | null;

@@ -23,15 +23,20 @@ type Body = {
 /**
  * Low-latency LIVE answer stream.
  *
+ * The response headers are flushed BEFORE the gateway call is dispatched: the
+ * browser gets a `: ic-open` comment frame within a few ms, which (a) defeats
+ * any proxy that would otherwise buffer until the first real chunk and (b)
+ * lets the client separate transport cost from provider cost.
+ *
  * Benchmark mode and production mode build the prompt with `buildLiveMessages`
- * and issue the gateway call with `executeLiveAnswerRequest` — one code path,
- * differing only in whether the stream is drained here or passed to the browser.
+ * and issue the gateway call with `executeLiveAnswerRequest` — one code path.
  */
 export const Route = createFileRoute("/api/live-answer")({
   server: {
     handlers: {
       POST: async ({ request }) => {
         const t0 = Date.now();
+        const since = () => Date.now() - t0;
         const {
           getLiveSessionContext,
           retrieveLiveContext,
@@ -41,6 +46,7 @@ export const Route = createFileRoute("/api/live-answer")({
           executeLiveAnswerRequest,
           measureLiveStream,
           LiveStreamSniffer,
+          verifyLiveToken,
           liveCallConfig,
           LIVE_LATENCY_MODE,
           LIVE_BENCHMARK_MODELS,
@@ -60,40 +66,68 @@ export const Route = createFileRoute("/api/live-answer")({
           return new Response("Invalid body", { status: 400 });
         }
 
-        const url = process.env["SUPABASE_URL"]!;
-        const publishable = process.env["SUPABASE_PUBLISHABLE_KEY"]!;
-        const authClient = createClient<Database>(url, publishable, {
-          auth: { persistSession: false, autoRefreshToken: false },
-          global: {
-            fetch: (input, init) => {
-              const h = new Headers(init?.headers);
-              if (publishable.startsWith("sb_") && h.get("Authorization") === `Bearer ${publishable}`) {
-                h.delete("Authorization");
-              }
-              h.set("apikey", publishable);
-              return fetch(input, { ...init, headers: h });
+        /* ---------------- auth (warm-cached) ---------------- */
+        const authStart = Date.now();
+        const { userId, cached: authCached } = await verifyLiveToken(token, async (jwt) => {
+          const url = process.env["SUPABASE_URL"]!;
+          const publishable = process.env["SUPABASE_PUBLISHABLE_KEY"]!;
+          const authClient = createClient<Database>(url, publishable, {
+            auth: { persistSession: false, autoRefreshToken: false },
+            global: {
+              fetch: (input, init) => {
+                const h = new Headers(init?.headers);
+                if (
+                  publishable.startsWith("sb_") &&
+                  h.get("Authorization") === `Bearer ${publishable}`
+                ) {
+                  h.delete("Authorization");
+                }
+                h.set("apikey", publishable);
+                return fetch(input, { ...init, headers: h });
+              },
             },
-          },
+          });
+          const { data, error } = await authClient.auth.getUser(jwt);
+          return error || !data.user ? null : data.user.id;
         });
-        const { data: userData, error: userError } = await authClient.auth.getUser(token);
-        if (userError || !userData.user) return new Response("Unauthorized", { status: 401 });
-        const userId = userData.user.id;
+        if (!userId) return new Response("Unauthorized", { status: 401 });
+        const authMs = Date.now() - authStart;
 
+        /* ---------------- session context (warm-cached) ---------------- */
+        const sessionStart = Date.now();
         const db = serviceClient();
         const ctx = await getLiveSessionContext(db, userId, body.sessionId);
         if (!ctx) return new Response("Not found", { status: 404 });
+        const sessionMs = Date.now() - sessionStart;
 
+        /* ---------------- resume context ---------------- */
+        const contextStart = Date.now();
         const prefetched = readPrefetchedContext(body.contextKey);
-        let contextText = body.benchmarkNoContext
-          ? ""
-          : (prefetched ??
-            (await retrieveLiveContext(db, userId, ctx.resumeDocumentId, body.questionText, 3)));
-        // Retrieval found nothing relevant: fall back to the compact fact card
-        // rather than dumping raw chunks into the critical path.
-        if (!contextText && !body.benchmarkNoContext) {
-          contextText = (await getLiveFactCard(db, userId, ctx)).slice(0, 1200);
+        let contextSource: "prefetch" | "retrieval" | "factcard" | "none" = "none";
+        let contextText = "";
+        if (body.benchmarkNoContext) {
+          contextSource = "none";
+        } else if (prefetched) {
+          contextText = prefetched;
+          contextSource = "prefetch";
+        } else {
+          contextText = await retrieveLiveContext(
+            db,
+            userId,
+            ctx.resumeDocumentId,
+            body.questionText,
+            3,
+          );
+          contextSource = "retrieval";
+          if (!contextText) {
+            contextText = (await getLiveFactCard(db, userId, ctx)).slice(0, 1200);
+            contextSource = "factcard";
+          }
         }
+        const contextMs = Date.now() - contextStart;
 
+        /* ---------------- prompt ---------------- */
+        const promptStart = Date.now();
         const { messages, stats } = buildLiveMessages({
           ctx,
           style: body.answerStyle ?? ctx.answerStyle,
@@ -105,6 +139,7 @@ export const Route = createFileRoute("/api/live-answer")({
           priorQna: body.priorQna ?? "",
           isFollowUp: body.isFollowUp ?? false,
         });
+        const promptMs = Date.now() - promptStart;
 
         const cfg = liveCallConfig();
 
@@ -158,78 +193,158 @@ export const Route = createFileRoute("/api/live-answer")({
             live: cfg,
             promptStats: stats,
             grounded: !body.benchmarkNoContext,
+            phases: { authMs, authCached, sessionMs, contextMs, contextSource, promptMs },
             results,
           });
         }
 
-        const exec = await executeLiveAnswerRequest(messages, cfg, t0);
-        const upstream = exec.upstream;
-
-        if (!upstream.ok || !upstream.body) {
-          const detail = await upstream.text().catch(() => "");
-          const status = upstream.status === 429 || upstream.status === 402 ? upstream.status : 500;
-          return new Response(detail.slice(0, 400) || "AI request failed", { status });
-        }
-
-        // Byte-for-byte pass-through: every upstream chunk is enqueued the moment
-        // it arrives (no buffering, no re-encoding, no DB work), while the shared
-        // sniffer records timings/usage and one trailing meta frame is appended.
+        /* ---------------- streamed production answer ---------------- */
         const encoder = new TextEncoder();
         const sniffer = new LiveStreamSniffer(t0, false);
+        const preludeMs = since();
 
-        const instrumented = new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, controller) {
-            controller.enqueue(chunk);
-            sniffer.pushBytes(chunk);
-          },
-          flush(controller) {
-            const meta = {
-              ic_meta: {
-                requestedModel: cfg.model,
-                actualModel: sniffer.actualModel,
-                provider: sniffer.provider,
-                requestedEffort: cfg.reasoningEffort || "default",
-                actualEffort: exec.usedEffort,
-                requestedTier: cfg.serviceTier || "default",
-                actualTier: sniffer.actualTier ?? exec.usedTier,
-                fallbackReason: exec.fallbackReason,
-                latencyMode: LIVE_LATENCY_MODE,
-                maxOutputTokens: cfg.maxOutput,
-                inputTokens: sniffer.usage?.prompt_tokens ?? null,
-                cachedInputTokens: sniffer.usage?.prompt_tokens_details?.cached_tokens ?? null,
-                outputTokens: sniffer.usage?.completion_tokens ?? null,
-                promptChars: stats.promptChars,
-                resumeChars: stats.resumeChars,
-                conversationChars: stats.conversationChars,
-                priorQnaChars: stats.priorQnaChars,
-                jobChars: stats.jobChars,
-                serverRequestSentMs: exec.requestSentMs,
-                upstreamHeadersMs: exec.headersMs,
-                upstreamFirstEventMs: sniffer.firstEventMs,
-                upstreamFirstDeltaMs: sniffer.firstTextMs,
-                upstreamTotalMs: Date.now() - t0,
-                contextChars: contextText.length,
-                context: prefetched ? "hit" : "miss",
-              },
-            };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(meta)}\n\n`));
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            // Flushed before the gateway is even called: proves the transport is
+            // unbuffered and starts the browser's clock on real bytes.
+            controller.enqueue(
+              encoder.encode(
+                `: ic-open ${preludeMs}\n\ndata: ${JSON.stringify({
+                  ic_open: { preludeMs, authMs, authCached, sessionMs, contextMs, contextSource, promptMs },
+                })}\n\n`,
+              ),
+            );
+
+            // Keepalive comments while the provider thinks: without traffic some
+            // proxies hold the connection and the first token arrives in a burst.
+            const keepalive = setInterval(() => {
+              try {
+                controller.enqueue(encoder.encode(`: ka ${since()}\n\n`));
+              } catch {
+                /* closed */
+              }
+            }, 100);
+
+            let exec: Awaited<ReturnType<typeof executeLiveAnswerRequest>> | null = null;
+            try {
+              exec = await executeLiveAnswerRequest(messages, cfg, t0);
+              const upstream = exec.upstream;
+
+              if (!upstream.ok || !upstream.body) {
+                const detail = await upstream.text().catch(() => "");
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      ic_error: {
+                        status: upstream.status,
+                        message: detail.slice(0, 300) || "AI request failed",
+                      },
+                    })}\n\n`,
+                  ),
+                );
+                return;
+              }
+
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    ic_upstream: { requestSentMs: exec.requestSentMs, headersMs: exec.headersMs },
+                  })}\n\n`,
+                ),
+              );
+
+              const reader = upstream.body.getReader();
+              let firstForwardMs: number | null = null;
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (firstForwardMs == null) {
+                  firstForwardMs = since();
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ ic_first: { firstForwardMs } })}\n\n`),
+                  );
+                }
+                controller.enqueue(value);
+                sniffer.pushBytes(value);
+              }
+
+              const meta = {
+                ic_meta: {
+                  requestedModel: cfg.model,
+                  actualModel: sniffer.actualModel,
+                  provider: sniffer.provider,
+                  requestedEffort: cfg.reasoningEffort || "default",
+                  actualEffort: exec.usedEffort,
+                  requestedTier: cfg.serviceTier || "default",
+                  actualTier: sniffer.actualTier ?? exec.usedTier,
+                  fallbackReason: exec.fallbackReason,
+                  latencyMode: LIVE_LATENCY_MODE,
+                  maxOutputTokens: cfg.maxOutput,
+                  inputTokens: sniffer.usage?.prompt_tokens ?? null,
+                  cachedInputTokens: sniffer.usage?.prompt_tokens_details?.cached_tokens ?? null,
+                  outputTokens: sniffer.usage?.completion_tokens ?? null,
+                  promptChars: stats.promptChars,
+                  resumeChars: stats.resumeChars,
+                  conversationChars: stats.conversationChars,
+                  priorQnaChars: stats.priorQnaChars,
+                  jobChars: stats.jobChars,
+                  serverRequestSentMs: exec.requestSentMs,
+                  upstreamHeadersMs: exec.headersMs,
+                  upstreamFirstEventMs: sniffer.firstEventMs,
+                  upstreamFirstDeltaMs: sniffer.firstTextMs,
+                  upstreamTotalMs: since(),
+                  contextChars: contextText.length,
+                  context: contextSource === "prefetch" ? "hit" : "miss",
+                  phases: {
+                    authMs,
+                    authCached,
+                    sessionMs,
+                    contextMs,
+                    contextSource,
+                    promptMs,
+                    preludeMs,
+                    dispatchMs: exec.requestSentMs,
+                    headersMs: exec.headersMs,
+                    firstForwardMs,
+                  },
+                },
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(meta)}\n\n`));
+            } catch (error) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    ic_error: {
+                      status: 500,
+                      message: error instanceof Error ? error.message : "AI request failed",
+                    },
+                  })}\n\n`,
+                ),
+              );
+            } finally {
+              clearInterval(keepalive);
+              controller.close();
+            }
           },
         });
 
-        return new Response(upstream.body.pipeThrough(instrumented), {
+        return new Response(stream, {
           headers: {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",
             Connection: "keep-alive",
-            "X-IC-Context": prefetched ? "hit" : "miss",
+            "X-IC-Context": contextSource === "prefetch" ? "hit" : "miss",
             "X-IC-Model": cfg.model,
             "X-IC-Tier": cfg.serviceTier || "default",
             "X-IC-Effort": cfg.reasoningEffort || "default",
             "X-IC-Prompt-Chars": String(stats.promptChars),
-            "X-IC-Server-Ms": String(exec.headersMs),
+            "X-IC-Prelude-Ms": String(preludeMs),
+            "X-IC-Auth-Ms": `${authMs}${authCached ? "c" : ""}`,
+            "X-IC-Server-Ms": String(preludeMs),
             "Access-Control-Expose-Headers":
-              "X-IC-Context, X-IC-Model, X-IC-Tier, X-IC-Effort, X-IC-Prompt-Chars, X-IC-Server-Ms",
+              "X-IC-Context, X-IC-Model, X-IC-Tier, X-IC-Effort, X-IC-Prompt-Chars, X-IC-Server-Ms, X-IC-Prelude-Ms, X-IC-Auth-Ms",
           },
         });
       },

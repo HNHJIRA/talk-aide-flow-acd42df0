@@ -412,8 +412,10 @@ export function useCopilotSession(opts: Options) {
   const publishWaterfall = useCallback((timer: TurnTimer) => {
     const wf = timer.waterfall();
     setLatency(wf);
-    setLatencyHistory((prev) => [wf, ...prev].slice(0, 8));
+    // One entry per turn: later paints of the same turn replace the earlier one.
+    setLatencyHistory((prev) => [wf, ...prev.filter((h) => h.turnId !== wf.turnId)].slice(0, 8));
   }, []);
+
 
   /**
    * LIVE answer path. Can run in two modes:
@@ -534,9 +536,10 @@ export function useCopilotSession(opts: Options) {
           }),
         });
         timer.mark("aiResponseHeaders");
-        const serverMs = Number(res.headers.get("X-IC-Server-Ms") ?? "");
-        if (!Number.isNaN(serverMs)) timer.serverTtftMs = serverMs;
+        const preludeMs = Number(res.headers.get("X-IC-Prelude-Ms") ?? "");
+        if (!Number.isNaN(preludeMs)) timer.serverTtftMs = preludeMs;
         if (res.headers.get("X-IC-Context") === "hit") timer.contextPrefetch = "hit";
+
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
@@ -565,6 +568,7 @@ export function useCopilotSession(opts: Options) {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          timer.mark("streamOpen");
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
@@ -576,7 +580,30 @@ export function useCopilotSession(opts: Options) {
               const json = JSON.parse(payload) as {
                 choices?: { delta?: { content?: string } }[];
                 ic_meta?: LiveCallMeta;
+                ic_open?: { preludeMs: number };
+                ic_upstream?: { requestSentMs: number; headersMs: number };
+                ic_first?: { firstForwardMs: number };
+                ic_error?: { status: number; message: string };
               };
+              if (json.ic_open) {
+                timer.serverTtftMs = json.ic_open.preludeMs;
+                continue;
+              }
+              if (json.ic_upstream) {
+                timer.serverDispatchMs = json.ic_upstream.requestSentMs;
+                continue;
+              }
+              if (json.ic_first) {
+                // Server-side ms at which the FIRST upstream byte was forwarded:
+                // everything after this is pure transport + browser parsing.
+                timer.serverTtftMs = json.ic_first.firstForwardMs;
+                continue;
+              }
+              if (json.ic_error) {
+                throw Object.assign(new Error(json.ic_error.message), {
+                  status: json.ic_error.status,
+                });
+              }
               if (json.ic_meta) {
                 setAiCall(json.ic_meta);
                 continue;
@@ -597,11 +624,13 @@ export function useCopilotSession(opts: Options) {
                 continue;
               }
               paint(answer);
-            } catch {
+            } catch (frameError) {
+              if (frameError instanceof Error && "status" in frameError) throw frameError;
               /* partial frame */
             }
           }
         }
+
 
         if (spec && !spec.promoted) {
           // Stream finished while still unconfirmed: hold the text, promotion

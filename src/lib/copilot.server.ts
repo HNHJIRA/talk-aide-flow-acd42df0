@@ -720,3 +720,52 @@ export async function measureLiveStream(res: Response, t0: number) {
   return sniffer.finish();
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Warm auth cache
+ *
+ * `auth.getUser(token)` is a network round-trip to the auth server on EVERY
+ * live request — measured at ~150-250 ms, which is spent entirely inside the
+ * speculative head start. Access tokens are immutable and short-lived, so a
+ * verified token is cached for a minute (never past its own `exp`).
+ * ------------------------------------------------------------------ */
+
+const tokenCache = new Map<string, { userId: string; exp: number }>();
+
+/** Verify a Supabase access token, reusing a recent verification when possible. */
+export async function verifyLiveToken(
+  token: string,
+  verify: (token: string) => Promise<string | null>,
+): Promise<{ userId: string | null; cached: boolean }> {
+  const now = Date.now();
+  const hit = tokenCache.get(token);
+  if (hit && hit.exp > now) return { userId: hit.userId, cached: true };
+
+  const userId = await verify(token);
+  if (!userId) return { userId: null, cached: false };
+
+  // Never outlive the token itself.
+  let tokenExp = now + 60_000;
+  try {
+    const claims = JSON.parse(atob(token.split(".")[1] ?? "")) as { exp?: number };
+    if (claims.exp) tokenExp = Math.min(tokenExp, claims.exp * 1000);
+  } catch {
+    /* opaque token: fall back to the 60 s window */
+  }
+  if (tokenCache.size > 200) tokenCache.clear();
+  tokenCache.set(token, { userId, exp: tokenExp });
+  return { userId, cached: false };
+}
+
+/** Per-request phase timings for the live route, in ms from request arrival. */
+export type LivePhases = {
+  authMs: number;
+  authCached: boolean;
+  sessionMs: number;
+  contextMs: number;
+  contextSource: "prefetch" | "retrieval" | "factcard" | "none";
+  promptMs: number;
+  dispatchMs: number;
+  headersMs: number;
+  firstForwardMs: number | null;
+};
