@@ -133,11 +133,21 @@ export class TurnTimer {
       speculativeReused: this.speculativeReused,
       speculativeCancelled: this.speculativeCancelled,
       headStartMs: diff(m.aiRequestStart, m.sttFinal),
+      providerHeadStartMs:
+        this.serverDispatchMs != null && m.aiRequestStart != null && m.sttFinal != null
+          ? Math.round(m.sttFinal - m.aiRequestStart - this.serverDispatchMs)
+          : null,
+      streamOpenMs: diff(m.aiRequestStart, m.streamOpen),
+      transportOverheadMs:
+        this.serverTtftMs != null && m.aiRequestStart != null && m.aiFirstToken != null
+          ? Math.max(0, Math.round(m.aiFirstToken - m.aiRequestStart - this.serverTtftMs))
+          : null,
       bufferedCharsAtConfirm: this.bufferedCharsAtConfirm,
       visibleAfterConfirmMs: diff(m.sttFinal, m.aiFirstRender),
     };
   }
 }
+
 
 export const EMPTY_WATERFALL: LatencyWaterfall = {
   turnId: "—",
