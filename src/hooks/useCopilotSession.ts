@@ -356,6 +356,18 @@ export function useCopilotSession(opts: Options) {
     specStarted: 0,
     specReused: 0,
     specAborted: 0,
+    merged: 0,
+    resumed: 0,
+    graceHolds: 0,
+    duplicateBlocked: 0,
+  });
+  /** Turn ids that already produced an automatic answer. */
+  const answeredTurns = useRef<Set<string>>(new Set());
+  const [turnView, setTurnView] = useState({
+    id: "—",
+    segments: 0,
+    assembled: "",
+    continuation: "—",
   });
 
   const newTurn = useCallback(() => {
@@ -365,6 +377,10 @@ export function useCopilotSession(opts: Options) {
       timer: new TurnTimer(id),
       status: "listening",
       text: "",
+      segments: [],
+      resumedCount: 0,
+      turnIndex: null,
+      answered: false,
       segmentId: null,
       contextKey: null,
       prefetch: null,
@@ -375,6 +391,7 @@ export function useCopilotSession(opts: Options) {
     turnRef.current = turn;
     return turn;
   }, []);
+
 
 
   const currentTurn = useCallback(() => {
