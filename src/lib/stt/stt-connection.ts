@@ -2,20 +2,38 @@ import { STT_SAMPLE_RATE } from "@/lib/audio/pcm-source";
 
 export type SttState = "idle" | "connecting" | "active" | "reconnecting" | "error" | "closed";
 
+/** Which Deepgram pipeline is actually carrying this socket right now. */
+export type SttProfile = "flux" | "standard";
+
+export type SttEvent = "interim" | "eager_end_of_turn" | "turn_resumed" | "final";
+
 export type SttResult = {
   text: string;
   isFinal: boolean;
   confidence: number | null;
   startMs: number | null;
   endMs: number | null;
+  /** Richer turn signal; "interim"/"final" for the classic pipeline. */
+  event: SttEvent;
+  turnIndex: number | null;
 };
 
 type Options = {
   getToken: () => Promise<{ key: string; expiresAt: string; mode?: string }>;
   language?: string;
+  /**
+   * Ask for the low-latency conversational pipeline (Deepgram Flux) on this
+   * socket. Interviewer/remote audio only; the candidate microphone keeps the
+   * proven standard pipeline. Falls back automatically when unavailable.
+   */
+  lowLatency?: boolean;
   onResult: (result: SttResult) => void;
   onState: (state: SttState, detail?: string) => void;
+  onProfile?: (profile: SttProfile, detail: string) => void;
 };
+
+const FLUX_URL = "wss://api.deepgram.com/v2/listen";
+const STANDARD_URL = "wss://api.deepgram.com/v1/listen";
 
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
@@ -29,11 +47,20 @@ export class SttConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private queue: ArrayBuffer[] = [];
   private state: SttState = "idle";
+  private profile: SttProfile;
+  private fluxOpened = false;
+  private fluxDisabled = false;
 
-  constructor(private readonly opts: Options) {}
+  constructor(private readonly opts: Options) {
+    this.profile = opts.lowLatency ? "flux" : "standard";
+  }
 
   getState() {
     return this.state;
+  }
+
+  getProfile() {
+    return this.profile;
   }
 
   private setState(state: SttState, detail?: string) {
@@ -44,6 +71,35 @@ export class SttConnection {
   async start() {
     this.closedByUser = false;
     await this.connect();
+  }
+
+  private buildUrl() {
+    if (this.profile === "flux") {
+      const params = new URLSearchParams({
+        model: "flux-general-en",
+        encoding: "linear16",
+        sample_rate: String(STT_SAMPLE_RATE),
+        // Emit a speculative end-of-turn early so speculative preparation can start
+        // before the confirmed end of turn arrives.
+        eager_eot_threshold: "0.6",
+        eot_threshold: "0.7",
+      });
+      return `${FLUX_URL}?${params.toString()}`;
+    }
+    const params = new URLSearchParams({
+      model: "nova-3",
+      encoding: "linear16",
+      sample_rate: String(STT_SAMPLE_RATE),
+      channels: "1",
+      interim_results: "true",
+      smart_format: "true",
+      punctuate: "true",
+      // Tightened from 300/1000: finalisation is the first link of the latency chain.
+      endpointing: this.opts.lowLatency ? "150" : "300",
+      utterance_end_ms: this.opts.lowLatency ? "1000" : "1000",
+      language: this.opts.language ?? "en",
+    });
+    return `${STANDARD_URL}?${params.toString()}`;
   }
 
   private async connect() {
@@ -58,31 +114,28 @@ export class SttConnection {
       return;
     }
 
-    const params = new URLSearchParams({
-      model: "nova-3",
-      encoding: "linear16",
-      sample_rate: String(STT_SAMPLE_RATE),
-      channels: "1",
-      interim_results: "true",
-      smart_format: "true",
-      punctuate: "true",
-      endpointing: "300",
-      utterance_end_ms: "1000",
-      language: this.opts.language ?? "en",
-    });
-
     // A /v1/auth/grant access token authenticates with the "bearer" subprotocol;
     // a raw API key would use "token". We only ever receive the short-lived grant token.
-    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, [
+    const ws = new WebSocket(this.buildUrl(), [
       token.mode === "grant" ? "bearer" : "token",
       token.key,
     ]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    const openedWithProfile = this.profile;
 
     ws.onopen = () => {
       if (ws.readyState !== WebSocket.OPEN) return;
       this.attempts = 0;
+      if (openedWithProfile === "flux") this.fluxOpened = true;
+      this.opts.onProfile?.(
+        openedWithProfile,
+        openedWithProfile === "flux"
+          ? "Deepgram Flux (conversational end-of-turn)"
+          : this.opts.lowLatency
+            ? "nova-3 (endpointing 150ms)"
+            : "nova-3 (endpointing 300ms)",
+      );
       this.setState("active");
       this.keepAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
@@ -94,36 +147,16 @@ export class SttConnection {
 
     ws.onmessage = (event) => {
       try {
-        const payload = JSON.parse(String(event.data)) as {
-          type?: string;
-          is_final?: boolean;
-          speech_final?: boolean;
-          start?: number;
-          duration?: number;
-          channel?: { alternatives?: { transcript?: string; confidence?: number }[] };
-        };
-        if (payload.type && payload.type !== "Results") return;
-        const alt = payload.channel?.alternatives?.[0];
-        const text = (alt?.transcript ?? "").trim();
-        if (!text) return;
-        const startMs = payload.start != null ? Math.round(payload.start * 1000) : null;
-        const endMs =
-          payload.start != null && payload.duration != null
-            ? Math.round((payload.start + payload.duration) * 1000)
-            : null;
-        this.opts.onResult({
-          text,
-          isFinal: Boolean(payload.is_final),
-          confidence: alt?.confidence ?? null,
-          startMs,
-          endMs,
-        });
+        const payload = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (openedWithProfile === "flux") this.handleFlux(payload);
+        else this.handleStandard(payload);
       } catch {
         /* ignore malformed frame */
       }
     };
 
     ws.onerror = () => {
+      if (openedWithProfile === "flux" && !this.fluxOpened) return; // handled in onclose
       this.setState("error", "Transcription connection error");
     };
 
@@ -133,8 +166,76 @@ export class SttConnection {
         this.setState("closed");
         return;
       }
+      // Flux never came up on this project/key: permanently drop to the proven pipeline.
+      if (openedWithProfile === "flux" && !this.fluxOpened) {
+        this.fluxDisabled = true;
+        this.profile = "standard";
+        this.opts.onProfile?.(
+          "standard",
+          "Flux unavailable — fell back to nova-3 (endpointing 150ms)",
+        );
+        void this.connect();
+        return;
+      }
       this.scheduleReconnect();
     };
+  }
+
+  /** Classic /v1/listen Results frames. */
+  private handleStandard(payload: Record<string, unknown>) {
+    const type = payload["type"] as string | undefined;
+    if (type && type !== "Results") return;
+    const channel = payload["channel"] as
+      | { alternatives?: { transcript?: string; confidence?: number }[] }
+      | undefined;
+    const alt = channel?.alternatives?.[0];
+    const text = (alt?.transcript ?? "").trim();
+    if (!text) return;
+    const start = payload["start"] as number | undefined;
+    const duration = payload["duration"] as number | undefined;
+    const isFinal = Boolean(payload["is_final"]);
+    this.opts.onResult({
+      text,
+      isFinal,
+      confidence: alt?.confidence ?? null,
+      startMs: start != null ? Math.round(start * 1000) : null,
+      endMs: start != null && duration != null ? Math.round((start + duration) * 1000) : null,
+      event: isFinal ? "final" : "interim",
+      turnIndex: null,
+    });
+  }
+
+  /** Flux TurnInfo frames: Update / EagerEndOfTurn / TurnResumed / EndOfTurn. */
+  private handleFlux(payload: Record<string, unknown>) {
+    if (payload["type"] !== "TurnInfo") return;
+    const evt = String(payload["event"] ?? "");
+    const text = String(payload["transcript"] ?? "").trim();
+    const turnIndex = typeof payload["turn_index"] === "number" ? (payload["turn_index"] as number) : null;
+    const confidence =
+      typeof payload["end_of_turn_confidence"] === "number"
+        ? (payload["end_of_turn_confidence"] as number)
+        : null;
+
+    const map: Record<string, SttEvent | undefined> = {
+      Update: "interim",
+      StartOfTurn: undefined,
+      EagerEndOfTurn: "eager_end_of_turn",
+      TurnResumed: "turn_resumed",
+      EndOfTurn: "final",
+    };
+    const mapped = map[evt];
+    if (!mapped) return;
+    if (mapped !== "turn_resumed" && !text) return;
+
+    this.opts.onResult({
+      text,
+      isFinal: mapped === "final",
+      confidence,
+      startMs: null,
+      endMs: null,
+      event: mapped,
+      turnIndex,
+    });
   }
 
   private scheduleReconnect() {
@@ -144,6 +245,7 @@ export class SttConnection {
     this.setState("reconnecting");
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      if (this.fluxDisabled) this.profile = "standard";
       void this.connect();
     }, delay);
   }
