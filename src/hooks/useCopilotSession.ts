@@ -403,15 +403,22 @@ export function useCopilotSession(opts: Options) {
     resumed: 0,
     graceHolds: 0,
     duplicateBlocked: 0,
+    hardCommits: 0,
+    lateContinuations: 0,
+    reopened: 0,
+    superseded: 0,
   });
-  /** Turn ids that already produced an automatic answer. */
-  const answeredTurns = useRef<Set<string>>(new Set());
+  /** Turn id -> highest revision that already produced an automatic answer. */
+  const answeredTurns = useRef<Map<string, number>>(new Map());
   const [turnView, setTurnView] = useState({
     id: "—",
     segments: 0,
     assembled: "",
     continuation: "—",
+    revision: 0,
+    stage: "idle",
   });
+  const [turnSilenceMs, setTurnSilenceMs] = useState(0);
 
   const newTurn = useCallback(() => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -425,15 +432,33 @@ export function useCopilotSession(opts: Options) {
       turnIndex: null,
       answered: false,
       segmentId: null,
+      revision: 0,
+      lastSpeechAt: performance.now(),
+      lastInterim: "",
+      committedAt: null,
+      hardCommitted: false,
+      answerController: null,
       contextKey: null,
       prefetch: null,
       prefetchTopic: "",
       decideTimer: null,
+      hardTimer: null,
+      specTimer: null,
       spec: null,
     };
     turnRef.current = turn;
     return turn;
   }, []);
+
+  const clearTurnTimers = useCallback((turn: Turn) => {
+    if (turn.decideTimer) clearTimeout(turn.decideTimer);
+    if (turn.hardTimer) clearTimeout(turn.hardTimer);
+    if (turn.specTimer) clearTimeout(turn.specTimer);
+    turn.decideTimer = null;
+    turn.hardTimer = null;
+    turn.specTimer = null;
+  }, []);
+
 
 
 
