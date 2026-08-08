@@ -1212,17 +1212,41 @@ export function useCopilotSession(opts: Options) {
       if (!drivesDetection) return;
 
       const turn = currentTurn();
+      if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
       turn.timer.mark("speechEnd", lastRemoteVoiceAt.current ?? performance.now());
       turn.timer.remark("sttFinal");
-      turn.text = `${turn.text} ${result.text}`.trim().slice(-600);
+      // A "final" is one SEGMENT of a logical turn, never the turn itself: keep
+      // assembling until the sentence looks finished.
+      turn.segments.push(result.text.trim());
+      if (turn.segments.length > 1) turnStats.current.merged += 1;
+      turn.text = turn.segments.join(" ").trim().slice(-600);
 
       if (turn.decideTimer) clearTimeout(turn.decideTimer);
-      // Flux emits one confirmed EndOfTurn, so decide immediately. The classic
-      // pipeline can split a question across finals: allow a short merge window,
-      // shorter when the utterance already ends in terminal punctuation.
-      const delay = result.event === "final" && sttProfileRef.current === "flux" ? 0 : /[?.!]\s*$/.test(result.text) ? 120 : 320;
+      if (turn.answered) return;
+
+      const cont = continuationVerdict(turn.text);
+      setTurnView({
+        id: turn.id,
+        segments: turn.segments.length,
+        assembled: turn.text.slice(-160),
+        continuation: cont.incomplete ? `holding — ${cont.reason}` : cont.reason,
+      });
+
+      // Grace window: an unfinished utterance waits for the rest of the sentence
+      // instead of committing a half question. Flux's confirmed EndOfTurn on a
+      // complete sentence still decides immediately.
+      const delay = cont.incomplete
+        ? turn.resumedCount > 0
+          ? 450
+          : 320
+        : result.event === "final" && sttProfileRef.current === "flux"
+          ? 0
+          : /[?.!]\s*$/.test(result.text)
+            ? 120
+            : 320;
+      if (cont.incomplete) turnStats.current.graceHolds += 1;
       if (delay === 0) void decideTurn(turn);
       else
         turn.decideTimer = setTimeout(() => {
@@ -1230,8 +1254,9 @@ export function useCopilotSession(opts: Options) {
           void decideTurn(turn);
         }, delay);
     },
-    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn],
+    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn, newTurn],
   );
+
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
   const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
