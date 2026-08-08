@@ -92,8 +92,12 @@ export type DebugInfo = {
   turnStatus: TurnStatus;
   speculativePrepared: number;
   speculativeCancelled: number;
+  specStarted: number;
+  specReused: number;
+  specAborted: number;
   gateRejected: number;
   classifierCalls: number;
+
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
 
