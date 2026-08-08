@@ -962,36 +962,55 @@ export function useCopilotSession(opts: Options) {
   /** Confirmed question -> UI row + streaming answer. Database writes trail behind. */
   const commitQuestion = useCallback(
     (turn: Turn, question: string, category: string, confidence: number) => {
-      // One logical interviewer turn -> at most one automatic answer, no matter
-      // how many STT segments or speculative restarts it went through.
-      if (turn.answered || answeredTurns.current.has(turn.id)) {
+      // One logical interviewer turn + revision -> at most one automatic answer,
+      // no matter how many STT segments or speculative restarts it went through.
+      if (turn.answered || answeredTurns.current.get(turn.id) === turn.revision) {
         turnStats.current.duplicateBlocked += 1;
         return;
       }
+      clearTurnTimers(turn);
       turn.answered = true;
-      answeredTurns.current.add(turn.id);
+      turn.committedAt = performance.now();
+      answeredTurns.current.set(turn.id, turn.revision);
       lastConfidence.current = confidence;
       patchDiag({ lastQuestion: question, lastConfidence: confidence });
       turn.status = "confirmed";
+      const revised = turn.revision > 0;
 
+      setQuestions((prev) =>
+        revised
+          ? prev.map((q) =>
+              q.id === turn.id
+                ? { ...q, text: question, category, confidence, answer: "", status: "generating" }
+                : q,
+            )
+          : [
+              {
+                id: turn.id,
+                dbId: null,
+                text: question,
+                category,
+                confidence,
+                status: "generating",
+                answer: "",
+                answerId: null,
+                firstTokenMs: null,
+                pinned: false,
+              },
+              ...prev,
+            ],
+      );
 
-      setQuestions((prev) => [
-        {
-          id: turn.id,
-          dbId: null,
-          text: question,
-          category,
-          confidence,
-          status: "generating",
-          answer: "",
-          answerId: null,
-          firstTokenMs: null,
-          pinned: false,
-        },
-        ...prev,
-      ]);
-
-      void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
+      if (revised) {
+        // Same logical question, revised text: update the existing row instead of
+        // creating a second one.
+        void (async () => {
+          const dbId = await questionRowIds.current.get(turn.id);
+          if (dbId) await supabase.from("detected_questions").update({ question_text: question }).eq("id", dbId);
+        })();
+      } else {
+        void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
+      }
 
       if (!optsRef.current.autoGenerate) {
         turn.spec?.controller.abort();
@@ -1018,8 +1037,47 @@ export function useCopilotSession(opts: Options) {
       }
       void streamLiveAnswer(turn, question, category);
     },
-    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall],
+    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall, clearTurnTimers],
   );
+
+  /**
+   * Late continuation: the interviewer resumed shortly after we already committed
+   * (usually after a hard-commit on a pause). Reopen the SAME logical turn, throw
+   * away the answer in flight and let the next decision supersede it.
+   */
+  const reopenTurn = useCallback(
+    (turn: Turn) => {
+      clearTurnTimers(turn);
+      turn.revision += 1;
+      turn.answered = false;
+      turn.hardCommitted = false;
+      turn.committedAt = null;
+      turn.status = "listening";
+      turnStats.current.reopened += 1;
+      turnStats.current.lateContinuations += 1;
+      if (turn.answerController) {
+        turnStats.current.superseded += 1;
+        turn.answerController.abort();
+        turn.answerController = null;
+      }
+      if (turn.spec) {
+        turn.spec.aborted = true;
+        turn.spec.controller.abort();
+        turn.spec = null;
+      }
+      setQuestions((prev) =>
+        prev.map((q) => (q.id === turn.id ? { ...q, answer: "", status: "generating" } : q)),
+      );
+      setTurnView((prev) => ({
+        ...prev,
+        revision: turn.revision,
+        stage: "late continuation",
+        continuation: `late continuation — revising turn (r${turn.revision})`,
+      }));
+    },
+    [clearTurnTimers],
+  );
+
 
 
   /**
