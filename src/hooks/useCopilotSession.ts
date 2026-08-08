@@ -111,6 +111,16 @@ export type DebugInfo = {
   graceHolds: number;
   duplicateAnswersBlocked: number;
   lastContinuationReason: string;
+  /* --- bounded silence / revision --- */
+  turnRevision: number;
+  turnSilenceMs: number;
+  turnStage: string;
+  hardCommits: number;
+  lateWindowState: string;
+  lateContinuations: number;
+  turnsReopened: number;
+  answersSuperseded: number;
+
 
 
   /* --- desktop companion / Zoom Desktop --- */
