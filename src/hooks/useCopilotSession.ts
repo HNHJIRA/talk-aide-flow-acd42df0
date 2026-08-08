@@ -466,21 +466,54 @@ export function useCopilotSession(opts: Options) {
       timer.contextPrefetch = contextKey ? "hit" : turn.prefetch ? "miss" : "none";
 
 
+      // Keep the live prompt small on purpose: the caps in copilot.server are
+      // maximums, these are the targets for the first automatic answer.
       const recentConversation = segmentsRef.current
-        .slice(-12)
+        .slice(-6)
         .map(
           (s) =>
             `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
         )
-        .join("\n");
-      const priorQna = questionsRef.current
-        .slice(0, 3)
-        .map((q) => `Q: ${q.text}\nSuggested: ${q.answer.slice(0, 240)}`)
-        .join("\n\n");
+        .join("\n")
+        .slice(-500);
+      const isFollowUp =
+        questionsRef.current.length > 0 &&
+        (questionText.trim().length < 60 ||
+          /\b(that|those|it|this|they|you just|also|and how|what about)\b/i.test(questionText));
+      const priorQna = isFollowUp
+        ? questionsRef.current
+            .slice(0, 1)
+            .map((q) => `Q: ${q.text}\nSuggested: ${q.answer.slice(0, 200)}`)
+            .join("\n\n")
+        : "";
 
-      timer.mark("aiRequestStart");
+      timer.remark("aiRequestStart");
       let answer = "";
       let firstToken: number | null = null;
+
+      const spec = turn.spec;
+      const hidden = () => speculative && spec != null && !spec.promoted;
+      const paint = (snapshot: string) =>
+        scheduleFlush(() => {
+          timer.mark("aiFirstRender");
+          setQuestions((prev) =>
+            prev.map((q) =>
+              q.id === turn.id ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
+            ),
+          );
+          patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
+          publishWaterfall(timer);
+        });
+      if (spec) {
+        // Promotion: the confirmed question matched — flush everything the model
+        // has already produced in one paint, then keep streaming normally.
+        spec.flush = () => {
+          spec.promoted = true;
+          timer.speculativeReused = true;
+          timer.bufferedCharsAtConfirm = answer.length;
+          if (answer) paint(answer);
+        };
+      }
 
       try {
         const res = await fetch("/api/live-answer", {
@@ -494,6 +527,7 @@ export function useCopilotSession(opts: Options) {
             contextKey,
             recentConversation,
             priorQna,
+            isFollowUp,
           }),
         });
         timer.mark("aiResponseHeaders");
@@ -503,6 +537,11 @@ export function useCopilotSession(opts: Options) {
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
+          if (speculative && !spec?.promoted) {
+            turn.spec = null;
+            turn.status = "listening";
+            return;
+          }
           const message =
             res.status === 429
               ? "AI rate limit reached — try again in a moment."
@@ -549,21 +588,24 @@ export function useCopilotSession(opts: Options) {
                 );
               }
               answer += delta;
-              const snapshot = answer;
-              scheduleFlush(() => {
-                timer.mark("aiFirstRender");
-                setQuestions((prev) =>
-                  prev.map((q) =>
-                    q.id === turn.id ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
-                  ),
-                );
-                patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
-                publishWaterfall(timer);
-              });
+              if (spec && !spec.promoted) {
+                // Generated, but deliberately invisible until the turn confirms.
+                spec.buffer = answer;
+                continue;
+              }
+              paint(answer);
             } catch {
               /* partial frame */
             }
           }
+        }
+
+        if (spec && !spec.promoted) {
+          // Stream finished while still unconfirmed: hold the text, promotion
+          // will paint it instantly when the turn is confirmed.
+          spec.buffer = answer;
+          timer.mark("aiComplete");
+          return;
         }
 
         timer.mark("aiComplete");
@@ -602,17 +644,29 @@ export function useCopilotSession(opts: Options) {
           await supabase.from("detected_questions").update({ status: "answered" }).eq("id", dbId);
         })();
       } catch (error) {
-        turn.status = "completed";
         if ((error as Error).name === "AbortError") {
+          if (speculative && !spec?.promoted) {
+            // Abandoned speculation: the user never saw a character of it.
+            turn.spec = null;
+            return;
+          }
+          turn.status = "completed";
           patchDiag({ aiState: "stopped" });
           setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "stopped" } : q)));
+          return;
+        }
+        turn.status = "completed";
+        if (speculative && !spec?.promoted) {
+          turn.spec = null;
           return;
         }
         patchDiag({ aiState: "error" });
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
         setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
       }
+      void hidden;
     },
+
     [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
   );
 
