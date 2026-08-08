@@ -838,11 +838,35 @@ export function useCopilotSession(opts: Options) {
       ]);
 
       void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
-      if (optsRef.current.autoGenerate) void streamLiveAnswer(turn, question, category);
-      else turn.status = "completed";
+
+      if (!optsRef.current.autoGenerate) {
+        turn.spec?.controller.abort();
+        turn.spec = null;
+        turn.status = "completed";
+        return;
+      }
+
+      // Reuse the in-flight speculative generation when the confirmed question is
+      // essentially the eager-end-of-turn text: its head start becomes our TTFT.
+      const spec = turn.spec;
+      if (spec && !spec.aborted && similar(normalize(spec.question), normalize(question)) > 0.7) {
+        turnStats.current.specReused += 1;
+        spec.flush?.();
+        publishWaterfall(turn.timer);
+        return;
+      }
+      if (spec) {
+        turnStats.current.specAborted += 1;
+        spec.aborted = true;
+        spec.controller.abort();
+        turn.spec = null;
+        turn.timer.speculativeReused = false;
+      }
+      void streamLiveAnswer(turn, question, category);
     },
-    [patchDiag, persistQuestion, streamLiveAnswer],
+    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall],
   );
+
 
   /**
    * Decide a completed turn. The local gate answers the vast majority instantly;
