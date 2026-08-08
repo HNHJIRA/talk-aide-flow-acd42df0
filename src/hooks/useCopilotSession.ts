@@ -1350,7 +1350,14 @@ export function useCopilotSession(opts: Options) {
           : opts.micMode === "fallback" && opts.fallbackAutoDetect
             ? "microphone (fallback auto-detect) + interviewer stream"
             : "interviewer stream only (meeting tab / Zoom Desktop)",
+      sttProfile,
+      turnStatus: turnRef.current?.status ?? "listening",
+      speculativePrepared: turnStats.current.prepared,
+      speculativeCancelled: turnStats.current.cancelled,
+      gateRejected: turnStats.current.gateRejected,
+      classifierCalls: turnStats.current.classifierCalls,
       companionState,
+
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
       companionBackend: companionHealth?.captureBackend ?? "unknown",
