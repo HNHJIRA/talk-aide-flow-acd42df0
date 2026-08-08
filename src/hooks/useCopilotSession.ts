@@ -1932,6 +1932,18 @@ export function useCopilotSession(opts: Options) {
       graceHolds: turnStats.current.graceHolds,
       duplicateAnswersBlocked: turnStats.current.duplicateBlocked,
       lastContinuationReason: turnView.continuation,
+      turnRevision: turnView.revision,
+      turnSilenceMs,
+      turnStage: turnView.stage,
+      hardCommits: turnStats.current.hardCommits,
+      lateWindowState:
+        turnRef.current?.committedAt != null &&
+        performance.now() - turnRef.current.committedAt <= LATE_CONTINUATION_MS
+          ? `open (${LATE_CONTINUATION_MS} ms)`
+          : "closed",
+      lateContinuations: turnStats.current.lateContinuations,
+      turnsReopened: turnStats.current.reopened,
+      answersSuperseded: turnStats.current.superseded,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
