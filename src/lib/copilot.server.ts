@@ -331,13 +331,25 @@ async function getUserChunks(db: ReturnType<typeof serviceClient>, userId: strin
   return chunks;
 }
 
+/**
+ * Prompt budgets for the automatic live answer. These are TARGETS, not the
+ * maximums the model could take: every extra character is prefill latency.
+ */
+export const LIVE_BUDGET = {
+  resume: 1200,
+  conversation: 400,
+  priorQna: 400,
+  summary: 300,
+  job: 350,
+};
+
 /** Top-k keyword retrieval over the cached chunk set. */
 export async function retrieveLiveContext(
   db: ReturnType<typeof serviceClient>,
   userId: string,
   documentId: string | null,
   question: string,
-  k = 4,
+  k = 3,
 ): Promise<string> {
   const terms = question
     .toLowerCase()
@@ -361,11 +373,60 @@ export async function retrieveLiveContext(
     .slice(0, k)
     .filter((item) => item.score > 0);
 
-  const selected = scored.length ? scored : chunks.slice(0, Math.min(3, k)).map((chunk) => ({ chunk, score: 0 }));
+  const selected = scored.length ? scored : chunks.slice(0, Math.min(2, k)).map((chunk) => ({ chunk, score: 0 }));
   return selected
-    .map((item) => `[${item.chunk.chunk_type}] ${item.chunk.content}`)
+    .map((item) => `[${item.chunk.chunk_type}] ${item.chunk.content.replace(/\s+/g, " ").trim()}`)
     .join("\n---\n")
-    .slice(0, 3500);
+    .slice(0, LIVE_BUDGET.resume);
+}
+
+const factCardCache = new Map<string, CacheEntry<string>>();
+
+/**
+ * Compact LIVE CANDIDATE FACT CARD, built once at Go Live from already-indexed
+ * chunks. Pure extraction — every line is verbatim resume text, nothing is
+ * summarised by a model and nothing is invented.
+ */
+export async function getLiveFactCard(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+  ctx: LiveSessionContext,
+  refresh = false,
+): Promise<string> {
+  const key = `${userId}:${ctx.sessionId}`;
+  if (!refresh) {
+    const cached = cacheGet(factCardCache, key);
+    if (cached != null) return cached;
+  }
+  const chunks = await getUserChunks(db, userId);
+  const clean = (text: string, max: number) => text.replace(/\s+/g, " ").trim().slice(0, max);
+  const pick = (types: string[], n: number, max: number) =>
+    chunks
+      .filter((c) => types.includes(c.chunk_type))
+      .filter((c) => !ctx.resumeDocumentId || c.document_id === ctx.resumeDocumentId)
+      .slice(0, n)
+      .map((c) => `- ${clean(c.content, max)}`);
+
+  const summary = pick(["summary"], 1, 260);
+  const skills = pick(["skills"], 2, 220);
+  const experience = pick(["experience"], 3, 240);
+  const projects = pick(["project", "projects"], 2, 200);
+  const education = pick(["education"], 1, 140);
+
+  const card = [
+    `Target role: ${ctx.targetRole ?? "unspecified"}`,
+    summary.length ? `Summary:\n${summary.join("\n")}` : "",
+    skills.length ? `Core skills:\n${skills.join("\n")}` : "",
+    experience.length ? `Experience facts:\n${experience.join("\n")}` : "",
+    projects.length ? `Key projects:\n${projects.join("\n")}` : "",
+    education.length ? `Education:\n${education.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 2200);
+
+  cacheSet(factCardCache, key, card);
+  return card;
 }
 
 export function storePrefetchedContext(key: string, context: string) {
@@ -393,7 +454,7 @@ ${ctx.profileLine}
 TARGET: ${ctx.targetRole ?? "unspecified"} at ${ctx.companyName ?? "unspecified company"}
 
 JOB CONTEXT:
-${(ctx.jobDescription ?? "(none provided)").slice(0, 700)}`;
+${(ctx.jobDescription ?? "(none provided)").slice(0, LIVE_BUDGET.job)}`;
 }
 
 export function liveUserPrompt(args: {
@@ -406,17 +467,79 @@ export function liveUserPrompt(args: {
 }) {
   const parts = [
     `VERIFIED RESUME EXCERPTS (only source of personal facts):\n${
-      args.context.slice(0, 2500) ||
+      args.context.slice(0, LIVE_BUDGET.resume) ||
       "(no resume content available — do not invent any personal history)"
     }`,
   ];
-  if (args.rollingSummary) parts.push(`SESSION SUMMARY:\n${args.rollingSummary.slice(0, 500)}`);
-  if (args.recentConversation) parts.push(`RECENT CONVERSATION:\n${args.recentConversation}`);
-  if (args.priorQna) parts.push(`EARLIER Q&A:\n${args.priorQna}`);
+  if (args.rollingSummary)
+    parts.push(`SESSION SUMMARY:\n${args.rollingSummary.slice(0, LIVE_BUDGET.summary)}`);
+  if (args.recentConversation)
+    parts.push(`RECENT CONVERSATION:\n${args.recentConversation.slice(-LIVE_BUDGET.conversation)}`);
+  if (args.priorQna) parts.push(`EARLIER Q&A:\n${args.priorQna.slice(-LIVE_BUDGET.priorQna)}`);
   parts.push(
     `INTERVIEW QUESTION (category: ${args.category}):\n${args.question}\n\nWrite what the candidate should say now.`,
   );
   return parts.join("\n\n");
+}
+
+export type LiveMessage = { role: string; content: string };
+
+export type LivePromptStats = {
+  promptChars: number;
+  systemChars: number;
+  userChars: number;
+  resumeChars: number;
+  conversationChars: number;
+  priorQnaChars: number;
+  jobChars: number;
+  summaryChars: number;
+};
+
+/**
+ * THE single live prompt builder. Benchmark and production both go through it,
+ * so a measured configuration is by construction the configuration that ships.
+ */
+export function buildLiveMessages(args: {
+  ctx: LiveSessionContext;
+  style: string;
+  length: string;
+  question: string;
+  category: string;
+  context: string;
+  recentConversation: string;
+  priorQna: string;
+  /** Follow-ups need earlier Q&A; a fresh question does not. */
+  isFollowUp?: boolean;
+}): { messages: LiveMessage[]; stats: LivePromptStats } {
+  const resume = args.context.slice(0, LIVE_BUDGET.resume);
+  const conversation = (args.recentConversation ?? "").slice(-LIVE_BUDGET.conversation);
+  const priorQna = args.isFollowUp ? (args.priorQna ?? "").slice(-LIVE_BUDGET.priorQna) : "";
+  const system = liveSystemPrompt(args.ctx, args.style, args.length);
+  const user = liveUserPrompt({
+    question: args.question.trim(),
+    category: args.category,
+    context: resume,
+    recentConversation: conversation,
+    priorQna,
+    rollingSummary: args.ctx.rollingSummary,
+  });
+
+  return {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    stats: {
+      promptChars: system.length + user.length,
+      systemChars: system.length,
+      userChars: user.length,
+      resumeChars: resume.length,
+      conversationChars: conversation.length,
+      priorQnaChars: priorQna.length,
+      jobChars: (args.ctx.jobDescription ?? "").slice(0, LIVE_BUDGET.job).length,
+      summaryChars: (args.ctx.rollingSummary ?? "").slice(0, LIVE_BUDGET.summary).length,
+    },
+  };
 }
 
 export type LiveCallConfig = {
@@ -437,10 +560,7 @@ export const liveCallConfig = (): LiveCallConfig => ({
  * Body for the live streaming call. The output-token field and the sampling
  * knobs differ per vendor: the gpt-5.6 family rejects `max_tokens` outright.
  */
-export function liveAnswerBody(
-  messages: { role: string; content: string }[],
-  cfg: LiveCallConfig = liveCallConfig(),
-) {
+export function liveAnswerBody(messages: LiveMessage[], cfg: LiveCallConfig = liveCallConfig()) {
   const isOpenAi = cfg.model.startsWith("openai/");
   const body: Record<string, unknown> = {
     model: cfg.model,
@@ -455,3 +575,148 @@ export function liveAnswerBody(
   if (cfg.serviceTier) body["service_tier"] = cfg.serviceTier;
   return body;
 }
+
+export type LiveUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+};
+
+export type LiveExecResult = {
+  upstream: Response;
+  cfg: LiveCallConfig;
+  usedTier: string;
+  usedEffort: string;
+  fallbackReason: string | null;
+  fallbackFromModel: string | null;
+  fallbackToModel: string | null;
+  /** ms from t0 to the moment the gateway request was actually dispatched. */
+  requestSentMs: number;
+  /** ms from t0 to upstream response headers. */
+  headersMs: number;
+};
+
+/**
+ * THE single gateway call used by the live answer AND by the benchmark. The two
+ * paths differ only in what they do with the returned stream.
+ */
+export async function executeLiveAnswerRequest(
+  messages: LiveMessage[],
+  cfg: LiveCallConfig,
+  t0: number,
+): Promise<LiveExecResult> {
+  const call = (payload: Record<string, unknown>) =>
+    fetch(GATEWAY_URL, {
+      method: "POST",
+      headers: lovableAiHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+  const payload = liveAnswerBody(messages, cfg);
+  const requestSentMs = Date.now() - t0;
+  let usedTier = cfg.serviceTier || "default";
+  let usedEffort = cfg.reasoningEffort || "default";
+  let fallbackReason: string | null = null;
+  let upstream = await call(payload);
+
+  // Speed knobs are best-effort: never break a live session because a tier or
+  // reasoning setting is unsupported. The model itself is NEVER swapped.
+  if (upstream.status === 400 && ("reasoning_effort" in payload || "service_tier" in payload)) {
+    const detail = await upstream.clone().text().catch(() => "");
+    fallbackReason = `gateway 400 on speed knobs: ${detail.slice(0, 160)}`;
+    const retry = { ...payload };
+    delete retry["reasoning_effort"];
+    delete retry["service_tier"];
+    usedTier = "default (fast rejected)";
+    usedEffort = "default (none rejected)";
+    upstream = await call(retry);
+  }
+
+  return {
+    upstream,
+    cfg,
+    usedTier,
+    usedEffort,
+    fallbackReason,
+    fallbackFromModel: null,
+    fallbackToModel: null,
+    requestSentMs,
+    headersMs: Date.now() - t0,
+  };
+}
+
+/**
+ * THE single SSE parser. Used to instrument the production pass-through and to
+ * measure the benchmark, so both report the same numbers on the same events.
+ */
+export class LiveStreamSniffer {
+  firstEventMs: number | null = null;
+  firstTextMs: number | null = null;
+  totalMs: number | null = null;
+  usage: LiveUsage | null = null;
+  actualModel: string | null = null;
+  actualTier: string | null = null;
+  provider: string | null = null;
+  text = "";
+  private buffer = "";
+  private decoder = new TextDecoder();
+
+  constructor(
+    private readonly t0: number,
+    private readonly collectText = false,
+  ) {}
+
+  pushBytes(chunk: Uint8Array) {
+    this.push(this.decoder.decode(chunk, { stream: true }));
+  }
+
+  push(part: string) {
+    this.buffer += part;
+    const lines = this.buffer.split("\n");
+    this.buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const raw = line.slice(5).trim();
+      if (!raw || raw === "[DONE]") continue;
+      if (this.firstEventMs == null) this.firstEventMs = Date.now() - this.t0;
+      try {
+        const json = JSON.parse(raw) as {
+          model?: string;
+          provider?: string;
+          service_tier?: string;
+          usage?: LiveUsage;
+          choices?: { delta?: { content?: string } }[];
+        };
+        if (json.model) this.actualModel = json.model;
+        if (json.provider) this.provider = json.provider;
+        if (json.service_tier) this.actualTier = json.service_tier;
+        if (json.usage) this.usage = json.usage;
+        const delta = json.choices?.[0]?.delta?.content;
+        if (delta) {
+          if (this.firstTextMs == null) this.firstTextMs = Date.now() - this.t0;
+          if (this.collectText) this.text += delta;
+        }
+      } catch {
+        /* partial frame */
+      }
+    }
+  }
+
+  finish() {
+    this.totalMs = Date.now() - this.t0;
+    return this;
+  }
+}
+
+/** Drain a stream fully through the shared sniffer (benchmark path). */
+export async function measureLiveStream(res: Response, t0: number) {
+  const sniffer = new LiveStreamSniffer(t0, true);
+  const reader = res.body!.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    sniffer.pushBytes(value);
+  }
+  return sniffer.finish();
+}
+
