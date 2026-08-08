@@ -8,7 +8,14 @@ import {
   type SttProfile,
 } from "@/lib/stt/stt-connection";
 import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
-import { TurnTimer, EMPTY_WATERFALL, type LatencyWaterfall, type TurnStatus } from "@/lib/latency";
+import {
+  TurnTimer,
+  EMPTY_WATERFALL,
+  type LatencyWaterfall,
+  type LiveCallMeta,
+  type TurnStatus,
+} from "@/lib/latency";
+
 import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
 
 import {
@@ -303,6 +310,8 @@ export function useCopilotSession(opts: Options) {
   questionsRef.current = questions;
   const [latency, setLatency] = useState<LatencyWaterfall>(EMPTY_WATERFALL);
   const [latencyHistory, setLatencyHistory] = useState<LatencyWaterfall[]>([]);
+  const [aiCall, setAiCall] = useState<LiveCallMeta | null>(null);
+
   const [sttProfile, setSttProfile] = useState("standard — nova-3");
   const turnStats = useRef({ prepared: 0, cancelled: 0, gateRejected: 0, classifierCalls: 0 });
 
@@ -476,9 +485,17 @@ export function useCopilotSession(opts: Options) {
             const payload = line.slice(5).trim();
             if (!payload || payload === "[DONE]") continue;
             try {
-              const json = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+              const json = JSON.parse(payload) as {
+                choices?: { delta?: { content?: string } }[];
+                ic_meta?: LiveCallMeta;
+              };
+              if (json.ic_meta) {
+                setAiCall(json.ic_meta);
+                continue;
+              }
               const delta = json.choices?.[0]?.delta?.content;
               if (!delta) continue;
+
               if (firstToken === null) {
                 timer.mark("aiFirstToken");
                 firstToken = Math.round(
@@ -1418,6 +1435,8 @@ export function useCopilotSession(opts: Options) {
     debug,
     latency,
     latencyHistory,
+    aiCall,
+
     companionHealth,
     companionState,
     connectMicrophone,

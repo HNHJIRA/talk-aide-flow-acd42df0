@@ -121,3 +121,24 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
 };
 
 export const ms = (value: number | null) => (value == null ? "—" : `${value} ms`);
+
+/** Server-reported configuration and usage for one live AI answer call. */
+export type LiveCallMeta = {
+  requestedModel: string;
+  actualModel: string | null;
+  requestedEffort: string;
+  actualEffort: string;
+  requestedTier: string;
+  actualTier: string;
+  latencyMode: string;
+  maxOutputTokens: number;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  upstreamHeadersMs: number;
+  upstreamFirstDeltaMs: number | null;
+  upstreamTotalMs: number;
+  contextChars: number;
+  context: "hit" | "miss";
+};
+

@@ -108,6 +108,8 @@ function LiveSession() {
     debug,
     latency,
     latencyHistory,
+    aiCall,
+
     companionHealth,
     companionState,
     connectMicrophone,
@@ -368,7 +370,10 @@ function LiveSession() {
               </dl>
             ) : null}
 
-            {showDebug ? <LatencyWaterfallPanel latency={latency} history={latencyHistory} /> : null}
+            {showDebug ? (
+              <LatencyWaterfallPanel latency={latency} history={latencyHistory} aiCall={aiCall} />
+            ) : null}
+
           </div>
 
 
