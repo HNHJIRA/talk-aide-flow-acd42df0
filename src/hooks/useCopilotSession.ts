@@ -38,7 +38,9 @@ export type Segment = {
 };
 
 export type QuestionItem = {
+  /** Stable client-side turn id; the row id arrives later and never blocks the UI. */
   id: string;
+  dbId: string | null;
   text: string;
   category: string;
   confidence: number;
@@ -48,6 +50,7 @@ export type QuestionItem = {
   firstTokenMs: number | null;
   pinned: boolean;
 };
+
 
 export type DebugInfo = {
   micTrack: string;
