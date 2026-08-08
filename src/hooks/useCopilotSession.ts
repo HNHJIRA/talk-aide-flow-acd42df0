@@ -1675,6 +1675,14 @@ export function useCopilotSession(opts: Options) {
 
 
       classifierCalls: turnStats.current.classifierCalls,
+      turnId: turnView.id,
+      turnSegments: turnView.segments,
+      turnAssembled: turnView.assembled,
+      segmentsMerged: turnStats.current.merged,
+      turnsResumed: turnStats.current.resumed,
+      graceHolds: turnStats.current.graceHolds,
+      duplicateAnswersBlocked: turnStats.current.duplicateBlocked,
+      lastContinuationReason: turnView.continuation,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
@@ -1716,6 +1724,7 @@ export function useCopilotSession(opts: Options) {
       companionFormat,
       meetingStatus,
       sttProfile,
+      turnView,
     ],
   );
 
