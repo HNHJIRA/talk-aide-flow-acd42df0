@@ -87,6 +87,8 @@ export type DebugInfo = {
   speculativeCancelled: number;
   gateRejected: number;
   classifierCalls: number;
+  /* --- desktop companion / Zoom Desktop --- */
+  companionState: CompanionState;
 
   companionVersion: string;
   companionOs: string;
