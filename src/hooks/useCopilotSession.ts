@@ -1228,26 +1228,38 @@ export function useCopilotSession(opts: Options) {
 
   const stopGenerating = useCallback(() => abortRef.current?.abort(), []);
 
+  /**
+   * Regeneration works on the persisted row, which may still be in flight when
+   * the user clicks: resolve the client turn id to its database id first.
+   */
   const regenerate = useCallback(
-    (questionId: string, overrides?: { style?: string; length?: string }) =>
-      streamAnswer(questionId, overrides),
-    [streamAnswer],
+    async (clientId: string, overrides?: { style?: string; length?: string }) => {
+      const known = questionsRef.current.find((q) => q.id === clientId)?.dbId;
+      const dbId = known ?? (await questionRowIds.current.get(clientId)) ?? null;
+      if (!dbId) {
+        pushError("This answer is still being saved — try again in a second.");
+        return;
+      }
+      await streamAnswer(dbId, overrides);
+    },
+    [streamAnswer, pushError],
   );
 
-  const togglePin = useCallback(async (questionId: string) => {
+  const togglePin = useCallback(async (clientId: string) => {
     let next = false;
     setQuestions((prev) =>
       prev.map((q) => {
-        if (q.id !== questionId) return q;
+        if (q.id !== clientId) return q;
         next = !q.pinned;
         return { ...q, pinned: next };
       }),
     );
-    const target = questions.find((q) => q.id === questionId);
+    const target = questionsRef.current.find((q) => q.id === clientId);
     if (target?.answerId) {
       await supabase.from("generated_answers").update({ is_pinned: next }).eq("id", target.answerId);
     }
-  }, [questions]);
+  }, []);
+
 
   /** Mic-only fallback: explicitly treat the last microphone utterance as an interviewer question. */
   const promoteLastMicSegment = useCallback(async () => {
