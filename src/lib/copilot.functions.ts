@@ -181,3 +181,48 @@ ${transcript}`,
 
     return { skipped: false as const };
   });
+
+/* ---------- live latency path ---------- */
+
+const PrimeInput = z.object({ sessionId: z.string().uuid() });
+
+/** Called once when the user goes live: warms session + resume caches server-side. */
+export const primeLiveContext = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => PrimeInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { getLiveSessionContext, retrieveLiveContext, serviceClient } = await import(
+      "@/lib/copilot.server"
+    );
+    const db = serviceClient();
+    const ctx = await getLiveSessionContext(db, context.userId, data.sessionId, true);
+    if (!ctx) return { primed: false as const, chunks: 0 };
+    // Warm the chunk cache with a generic retrieval so the first real question is a hit.
+    const warm = await retrieveLiveContext(db, context.userId, ctx.resumeDocumentId, "experience skills summary", 4);
+    return { primed: true as const, chunks: warm.length };
+  });
+
+const PrefetchInput = z.object({
+  sessionId: z.string().uuid(),
+  topic: z.string().min(3).max(1000),
+  turnId: z.string().min(1).max(64),
+});
+
+/**
+ * Speculative retrieval from stabilised interim text. Returns a context key the
+ * live answer route can redeem, so the critical path skips retrieval entirely.
+ */
+export const prefetchContext = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => PrefetchInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { getLiveSessionContext, retrieveLiveContext, storePrefetchedContext, serviceClient } =
+      await import("@/lib/copilot.server");
+    const db = serviceClient();
+    const ctx = await getLiveSessionContext(db, context.userId, data.sessionId);
+    if (!ctx) return { contextKey: null, chars: 0 };
+    const retrieved = await retrieveLiveContext(db, context.userId, ctx.resumeDocumentId, data.topic, 4);
+    const key = `${context.userId}:${data.sessionId}:${data.turnId}`;
+    storePrefetchedContext(key, retrieved);
+    return { contextKey: key, chars: retrieved.length };
+  });
