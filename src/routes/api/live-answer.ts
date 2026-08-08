@@ -11,72 +11,21 @@ type Body = {
   priorQna?: string;
   answerStyle?: string;
   answerLength?: string;
-  /** Development-only: benchmark several models on this exact prompt. */
+  isFollowUp?: boolean;
+  /** Development-only: benchmark the exact production path on this prompt. */
   benchmark?: boolean;
   benchmarkModels?: string[];
   benchmarkRuns?: number;
+  /** Benchmark only: skip resume grounding to isolate prompt-size cost. */
+  benchmarkNoContext?: boolean;
 };
-
-type Usage = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  prompt_tokens_details?: { cached_tokens?: number };
-};
-
-/** Reads one SSE stream, returning TTFT, total duration, usage and text. */
-async function measureStream(res: Response, t0: number) {
-  const out = {
-    ttftMs: null as number | null,
-    totalMs: null as number | null,
-    text: "",
-    usage: null as Usage | null,
-    actualModel: null as string | null,
-    actualTier: null as string | null,
-  };
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      try {
-        const json = JSON.parse(payload) as {
-          model?: string;
-          service_tier?: string;
-          usage?: Usage;
-          choices?: { delta?: { content?: string } }[];
-        };
-        if (json.model) out.actualModel = json.model;
-        if (json.service_tier) out.actualTier = json.service_tier;
-        if (json.usage) out.usage = json.usage;
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) {
-          if (out.ttftMs == null) out.ttftMs = Date.now() - t0;
-          out.text += delta;
-        }
-      } catch {
-        /* partial frame */
-      }
-    }
-  }
-  out.totalMs = Date.now() - t0;
-  return out;
-}
 
 /**
  * Low-latency LIVE answer stream.
  *
- * Differences from /api/answer-stream (which stays untouched for regeneration
- * and style variants): the question does not have to exist in the database yet,
- * session context and resume chunks come from warm caches, retrieval is top-k,
- * and the model runs with the live speed configuration.
+ * Benchmark mode and production mode build the prompt with `buildLiveMessages`
+ * and issue the gateway call with `executeLiveAnswerRequest` — one code path,
+ * differing only in whether the stream is drained here or passed to the browser.
  */
 export const Route = createFileRoute("/api/live-answer")({
   server: {
@@ -84,14 +33,14 @@ export const Route = createFileRoute("/api/live-answer")({
       POST: async ({ request }) => {
         const t0 = Date.now();
         const {
-          GATEWAY_URL,
-          lovableAiHeaders,
           getLiveSessionContext,
           retrieveLiveContext,
+          getLiveFactCard,
           readPrefetchedContext,
-          liveSystemPrompt,
-          liveUserPrompt,
-          liveAnswerBody,
+          buildLiveMessages,
+          executeLiveAnswerRequest,
+          measureLiveStream,
+          LiveStreamSniffer,
           liveCallConfig,
           LIVE_LATENCY_MODE,
           LIVE_BENCHMARK_MODELS,
@@ -135,89 +84,86 @@ export const Route = createFileRoute("/api/live-answer")({
         if (!ctx) return new Response("Not found", { status: 404 });
 
         const prefetched = readPrefetchedContext(body.contextKey);
-        const contextText =
-          prefetched ??
-          (await retrieveLiveContext(db, userId, ctx.resumeDocumentId, body.questionText, 4));
+        let contextText = body.benchmarkNoContext
+          ? ""
+          : (prefetched ??
+            (await retrieveLiveContext(db, userId, ctx.resumeDocumentId, body.questionText, 3)));
+        // Retrieval found nothing relevant: fall back to the compact fact card
+        // rather than dumping raw chunks into the critical path.
+        if (!contextText && !body.benchmarkNoContext) {
+          contextText = (await getLiveFactCard(db, userId, ctx)).slice(0, 1200);
+        }
 
-        const style = body.answerStyle ?? ctx.answerStyle;
-        const length = body.answerLength ?? ctx.answerLength;
-
-        // Stable prefix first (identical bytes across the session, cache friendly),
-        // then only the small changing context.
-        const messages = [
-          { role: "system", content: liveSystemPrompt(ctx, style, length) },
-          {
-            role: "user",
-            content: liveUserPrompt({
-              question: body.questionText.trim(),
-              category: body.category ?? "general",
-              context: contextText,
-              recentConversation: (body.recentConversation ?? "").slice(-1200),
-              priorQna: (body.priorQna ?? "").slice(-700),
-              rollingSummary: ctx.rollingSummary,
-            }),
-          },
-        ];
-
-        const call = (payload: Record<string, unknown>) =>
-          fetch(GATEWAY_URL, {
-            method: "POST",
-            headers: lovableAiHeaders(),
-            body: JSON.stringify(payload),
-          });
+        const { messages, stats } = buildLiveMessages({
+          ctx,
+          style: body.answerStyle ?? ctx.answerStyle,
+          length: body.answerLength ?? ctx.answerLength,
+          question: body.questionText,
+          category: body.category ?? "general",
+          context: contextText,
+          recentConversation: body.recentConversation ?? "",
+          priorQna: body.priorQna ?? "",
+          isFollowUp: body.isFollowUp ?? false,
+        });
 
         const cfg = liveCallConfig();
 
-        /* ---------------- development-only model benchmark ---------------- */
+        /* ------- development-only benchmark: identical prompt + call path ------- */
         if (body.benchmark && import.meta.env.DEV) {
-          const models = body.benchmarkModels?.length
-            ? body.benchmarkModels
-            : LIVE_BENCHMARK_MODELS;
-          const runs = Math.min(Math.max(body.benchmarkRuns ?? 3, 1), 5);
+          const models = body.benchmarkModels?.length ? body.benchmarkModels : LIVE_BENCHMARK_MODELS;
+          const runs = Math.min(Math.max(body.benchmarkRuns ?? 3, 1), 10);
+          const pct = (values: number[], p: number) => {
+            const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
+            if (!sorted.length) return null;
+            return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!;
+          };
           const results: unknown[] = [];
           for (const model of models) {
-            const samples: Awaited<ReturnType<typeof measureStream>>[] = [];
+            const ttfts: number[] = [];
+            const totals: number[] = [];
             let error: string | null = null;
+            let last: Awaited<ReturnType<typeof measureLiveStream>> | null = null;
             for (let i = 0; i < runs; i++) {
               const start = Date.now();
-              const res = await call(liveAnswerBody(messages, { ...cfg, model }));
-              if (!res.ok || !res.body) {
-                error = `${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`;
+              const exec = await executeLiveAnswerRequest(messages, { ...cfg, model }, start);
+              if (!exec.upstream.ok || !exec.upstream.body) {
+                error = `${exec.upstream.status} ${(await exec.upstream.text().catch(() => "")).slice(0, 200)}`;
                 break;
               }
-              samples.push(await measureStream(res, start));
+              const s = await measureLiveStream(exec.upstream, start);
+              if (s.firstTextMs != null) ttfts.push(s.firstTextMs);
+              if (s.totalMs != null) totals.push(s.totalMs);
+              last = s;
             }
-            const median = (values: number[]) =>
-              values.length ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)]! : null;
             results.push({
               model,
-              requestedTier: cfg.serviceTier || "default",
               error,
-              ttftMedianMs: median(samples.map((s) => s.ttftMs ?? 0)),
-              totalMedianMs: median(samples.map((s) => s.totalMs ?? 0)),
-              actualTier: samples[0]?.actualTier ?? null,
-              usage: samples[0]?.usage ?? null,
-              sample: samples[0]?.text.slice(0, 400) ?? null,
+              runs: ttfts.length,
+              ttftP50: pct(ttfts, 50),
+              ttftP75: pct(ttfts, 75),
+              ttftP95: pct(ttfts, 95),
+              ttftMin: ttfts.length ? Math.min(...ttfts) : null,
+              ttftMax: ttfts.length ? Math.max(...ttfts) : null,
+              totalP50: pct(totals, 50),
+              firstEventMs: last?.firstEventMs ?? null,
+              actualModel: last?.actualModel ?? null,
+              provider: last?.provider ?? null,
+              actualTier: last?.actualTier ?? null,
+              usage: last?.usage ?? null,
+              sample: last?.text.slice(0, 300) ?? null,
             });
           }
-          return Response.json({ latencyMode: LIVE_LATENCY_MODE, live: cfg, results });
+          return Response.json({
+            latencyMode: LIVE_LATENCY_MODE,
+            live: cfg,
+            promptStats: stats,
+            grounded: !body.benchmarkNoContext,
+            results,
+          });
         }
 
-        const payload = liveAnswerBody(messages, cfg);
-        let usedTier = cfg.serviceTier || "default";
-        let usedEffort = cfg.reasoningEffort || "default";
-        let upstream = await call(payload);
-
-        // Speed knobs are best-effort: never break a live session because a tier
-        // or reasoning setting is unsupported for the configured model.
-        if (upstream.status === 400 && ("reasoning_effort" in payload || "service_tier" in payload)) {
-          const fallback = { ...payload };
-          delete fallback["reasoning_effort"];
-          delete fallback["service_tier"];
-          usedTier = "default (fast rejected)";
-          usedEffort = "default (none rejected)";
-          upstream = await call(fallback);
-        }
+        const exec = await executeLiveAnswerRequest(messages, cfg, t0);
+        const upstream = exec.upstream;
 
         if (!upstream.ok || !upstream.body) {
           const detail = await upstream.text().catch(() => "");
@@ -225,63 +171,42 @@ export const Route = createFileRoute("/api/live-answer")({
           return new Response(detail.slice(0, 400) || "AI request failed", { status });
         }
 
-        const upstreamHeadersMs = Date.now() - t0;
-
         // Byte-for-byte pass-through: every upstream chunk is enqueued the moment
-        // it arrives (no buffering, no re-encoding, no DB work), while we sniff
-        // timings/usage for diagnostics and append one trailing meta frame.
+        // it arrives (no buffering, no re-encoding, no DB work), while the shared
+        // sniffer records timings/usage and one trailing meta frame is appended.
         const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
-        let sniff = "";
-        let firstDeltaMs: number | null = null;
-        let usage: Usage | null = null;
-        let actualModel: string | null = null;
-        let actualTier: string | null = null;
+        const sniffer = new LiveStreamSniffer(t0, false);
 
         const instrumented = new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             controller.enqueue(chunk);
-            sniff += decoder.decode(chunk, { stream: true });
-            const lines = sniff.split("\n");
-            sniff = lines.pop() ?? "";
-            for (const line of lines) {
-              if (!line.startsWith("data:")) continue;
-              const raw = line.slice(5).trim();
-              if (!raw || raw === "[DONE]") continue;
-              try {
-                const json = JSON.parse(raw) as {
-                  model?: string;
-                  service_tier?: string;
-                  usage?: Usage;
-                  choices?: { delta?: { content?: string } }[];
-                };
-                if (json.model) actualModel = json.model;
-                if (json.service_tier) actualTier = json.service_tier;
-                if (json.usage) usage = json.usage;
-                if (json.choices?.[0]?.delta?.content && firstDeltaMs == null) {
-                  firstDeltaMs = Date.now() - t0;
-                }
-              } catch {
-                /* partial frame */
-              }
-            }
+            sniffer.pushBytes(chunk);
           },
           flush(controller) {
             const meta = {
               ic_meta: {
                 requestedModel: cfg.model,
-                actualModel,
+                actualModel: sniffer.actualModel,
+                provider: sniffer.provider,
                 requestedEffort: cfg.reasoningEffort || "default",
-                actualEffort: usedEffort,
+                actualEffort: exec.usedEffort,
                 requestedTier: cfg.serviceTier || "default",
-                actualTier: actualTier ?? usedTier,
+                actualTier: sniffer.actualTier ?? exec.usedTier,
+                fallbackReason: exec.fallbackReason,
                 latencyMode: LIVE_LATENCY_MODE,
                 maxOutputTokens: cfg.maxOutput,
-                inputTokens: usage?.prompt_tokens ?? null,
-                cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? null,
-                outputTokens: usage?.completion_tokens ?? null,
-                upstreamHeadersMs,
-                upstreamFirstDeltaMs: firstDeltaMs,
+                inputTokens: sniffer.usage?.prompt_tokens ?? null,
+                cachedInputTokens: sniffer.usage?.prompt_tokens_details?.cached_tokens ?? null,
+                outputTokens: sniffer.usage?.completion_tokens ?? null,
+                promptChars: stats.promptChars,
+                resumeChars: stats.resumeChars,
+                conversationChars: stats.conversationChars,
+                priorQnaChars: stats.priorQnaChars,
+                jobChars: stats.jobChars,
+                serverRequestSentMs: exec.requestSentMs,
+                upstreamHeadersMs: exec.headersMs,
+                upstreamFirstEventMs: sniffer.firstEventMs,
+                upstreamFirstDeltaMs: sniffer.firstTextMs,
                 upstreamTotalMs: Date.now() - t0,
                 contextChars: contextText.length,
                 context: prefetched ? "hit" : "miss",
@@ -301,9 +226,10 @@ export const Route = createFileRoute("/api/live-answer")({
             "X-IC-Model": cfg.model,
             "X-IC-Tier": cfg.serviceTier || "default",
             "X-IC-Effort": cfg.reasoningEffort || "default",
-            "X-IC-Server-Ms": String(upstreamHeadersMs),
+            "X-IC-Prompt-Chars": String(stats.promptChars),
+            "X-IC-Server-Ms": String(exec.headersMs),
             "Access-Control-Expose-Headers":
-              "X-IC-Context, X-IC-Model, X-IC-Tier, X-IC-Effort, X-IC-Server-Ms",
+              "X-IC-Context, X-IC-Model, X-IC-Tier, X-IC-Effort, X-IC-Prompt-Chars, X-IC-Server-Ms",
           },
         });
       },

@@ -9,6 +9,8 @@ export type LatencyMark =
   | "audioFirstPacket"
   | "sttFirstInterim"
   | "sttStableInterim"
+  | "eagerEot"
+  | "speculativeStart"
   | "speechEnd"
   | "sttFinal"
   | "gateStart"
@@ -50,7 +52,18 @@ export type LatencyWaterfall = {
   browserRenderMs: number | null;
   totalMs: number | null;
   completeMs: number | null;
+  /* --- speculative head start --- */
+  speculative: boolean;
+  speculativeReused: boolean;
+  speculativeCancelled: boolean;
+  /** ms the AI request ran before the confirmed end of turn. */
+  headStartMs: number | null;
+  /** characters already generated (and hidden) at confirmation. */
+  bufferedCharsAtConfirm: number | null;
+  /** confirmed end of turn -> first visible token. This is the felt latency. */
+  visibleAfterConfirmMs: number | null;
 };
+
 
 const diff = (a: number | undefined, b: number | undefined) =>
   a != null && b != null ? Math.round(b - a) : null;
@@ -62,6 +75,11 @@ export class TurnTimer {
   contextPrefetch: "hit" | "miss" | "none" = "none";
   /** Server-reported ms spent between request arrival and first upstream token. */
   serverTtftMs: number | null = null;
+  /* --- speculative generation --- */
+  speculative = false;
+  speculativeReused = false;
+  speculativeCancelled = false;
+  bufferedCharsAtConfirm: number | null = null;
 
   constructor(turnId: string) {
     this.turnId = turnId;
@@ -99,6 +117,12 @@ export class TurnTimer {
       browserRenderMs: diff(m.aiFirstToken, m.aiFirstRender),
       totalMs: diff(anchor, m.aiFirstRender),
       completeMs: diff(anchor, m.aiComplete),
+      speculative: this.speculative,
+      speculativeReused: this.speculativeReused,
+      speculativeCancelled: this.speculativeCancelled,
+      headStartMs: diff(m.aiRequestStart, m.sttFinal),
+      bufferedCharsAtConfirm: this.bufferedCharsAtConfirm,
+      visibleAfterConfirmMs: diff(m.sttFinal, m.aiFirstRender),
     };
   }
 }
@@ -118,7 +142,14 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
   browserRenderMs: null,
   totalMs: null,
   completeMs: null,
+  speculative: false,
+  speculativeReused: false,
+  speculativeCancelled: false,
+  headStartMs: null,
+  bufferedCharsAtConfirm: null,
+  visibleAfterConfirmMs: null,
 };
+
 
 export const ms = (value: number | null) => (value == null ? "—" : `${value} ms`);
 
@@ -126,19 +157,29 @@ export const ms = (value: number | null) => (value == null ? "—" : `${value} m
 export type LiveCallMeta = {
   requestedModel: string;
   actualModel: string | null;
+  provider?: string | null;
   requestedEffort: string;
   actualEffort: string;
   requestedTier: string;
   actualTier: string;
+  fallbackReason?: string | null;
   latencyMode: string;
   maxOutputTokens: number;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   outputTokens: number | null;
+  promptChars?: number;
+  resumeChars?: number;
+  conversationChars?: number;
+  priorQnaChars?: number;
+  jobChars?: number;
+  serverRequestSentMs?: number;
   upstreamHeadersMs: number;
+  upstreamFirstEventMs?: number | null;
   upstreamFirstDeltaMs: number | null;
   upstreamTotalMs: number;
   contextChars: number;
+
   context: "hit" | "miss";
 };
 

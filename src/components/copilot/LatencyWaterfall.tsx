@@ -81,7 +81,30 @@ export function LatencyWaterfallPanel({
         <Row label="Token → painted" value={ms(latency.browserRenderMs)} />
         <Row label="Speech end → first token on screen" value={ms(latency.totalMs)} />
         <Row label="Speech end → answer complete" value={ms(latency.completeMs)} />
+        <Row
+          label="Speculative generation"
+          value={
+            !latency.speculative
+              ? "not started"
+              : latency.speculativeReused
+                ? "reused on final EOT"
+                : latency.speculativeCancelled
+                  ? "aborted (turn resumed)"
+                  : "started"
+          }
+        />
+        <Row label="AI head start before final" value={ms(latency.headStartMs)} />
+        <Row
+          label="Hidden text at confirm"
+          value={
+            latency.bufferedCharsAtConfirm == null
+              ? "—"
+              : `${latency.bufferedCharsAtConfirm} chars`
+          }
+        />
+        <Row label="Confirm → visible" value={ms(latency.visibleAfterConfirmMs)} />
         <Row label={`Median of last ${measured.length} turns`} value={ms(median)} />
+
       </dl>
 
       {history.length > 1 ? (
@@ -113,20 +136,29 @@ export function LatencyWaterfallPanel({
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
             <Row label="Model requested" value={aiCall.requestedModel} />
             <Row label="Model returned" value={aiCall.actualModel ?? "not reported"} />
+            <Row label="Provider" value={aiCall.provider ?? "not reported"} />
             <Row label="Reasoning requested" value={aiCall.requestedEffort} />
             <Row label="Reasoning applied" value={aiCall.actualEffort} />
             <Row label="Service tier requested" value={aiCall.requestedTier} />
             <Row label="Service tier returned" value={aiCall.actualTier} />
+            <Row label="Fallback" value={aiCall.fallbackReason ?? "none"} />
             <Row label="Input tokens" value={String(aiCall.inputTokens ?? "—")} />
             <Row label="Cached input tokens" value={String(aiCall.cachedInputTokens ?? "—")} />
             <Row
               label="Output tokens"
               value={`${aiCall.outputTokens ?? "—"} / max ${aiCall.maxOutputTokens}`}
             />
+            <Row
+              label="Prompt size"
+              value={`${aiCall.promptChars ?? "—"} chars (resume ${aiCall.resumeChars ?? "—"}, conv ${aiCall.conversationChars ?? "—"}, job ${aiCall.jobChars ?? "—"})`}
+            />
             <Row label="Resume context" value={`${aiCall.contextChars} chars (${aiCall.context})`} />
+            <Row label="Server → gateway sent" value={ms(aiCall.serverRequestSentMs ?? null)} />
             <Row label="Upstream headers" value={ms(aiCall.upstreamHeadersMs)} />
+            <Row label="Upstream first event" value={ms(aiCall.upstreamFirstEventMs ?? null)} />
             <Row label="Upstream first delta" value={ms(aiCall.upstreamFirstDeltaMs)} />
             <Row label="Generation complete" value={ms(aiCall.upstreamTotalMs)} />
+
           </dl>
         </div>
       ) : null}

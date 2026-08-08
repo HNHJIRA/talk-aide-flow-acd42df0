@@ -92,8 +92,12 @@ export type DebugInfo = {
   turnStatus: TurnStatus;
   speculativePrepared: number;
   speculativeCancelled: number;
+  specStarted: number;
+  specReused: number;
+  specAborted: number;
   gateRejected: number;
   classifierCalls: number;
+
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
 
@@ -300,6 +304,18 @@ export function useCopilotSession(opts: Options) {
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
     decideTimer: ReturnType<typeof setTimeout> | null;
+    /* --- speculative generation (started on eager end-of-turn) --- */
+    spec: {
+      question: string;
+      category: string;
+      controller: AbortController;
+      /** hidden text generated before the turn was confirmed */
+      buffer: string;
+      promoted: boolean;
+      aborted: boolean;
+      /** promote + immediately paint everything generated so far */
+      flush: (() => void) | null;
+    } | null;
   };
 
   const turnRef = useRef<Turn | null>(null);
@@ -313,7 +329,15 @@ export function useCopilotSession(opts: Options) {
   const [aiCall, setAiCall] = useState<LiveCallMeta | null>(null);
 
   const [sttProfile, setSttProfile] = useState("standard — nova-3");
-  const turnStats = useRef({ prepared: 0, cancelled: 0, gateRejected: 0, classifierCalls: 0 });
+  const turnStats = useRef({
+    prepared: 0,
+    cancelled: 0,
+    gateRejected: 0,
+    classifierCalls: 0,
+    specStarted: 0,
+    specReused: 0,
+    specAborted: 0,
+  });
 
   const newTurn = useCallback(() => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -327,10 +351,12 @@ export function useCopilotSession(opts: Options) {
       prefetch: null,
       prefetchTopic: "",
       decideTimer: null,
+      spec: null,
     };
     turnRef.current = turn;
     return turn;
   }, []);
+
 
   const currentTurn = useCallback(() => {
     const turn = turnRef.current;
@@ -390,23 +416,46 @@ export function useCopilotSession(opts: Options) {
   }, []);
 
   /**
-   * LIVE answer path. Starts the moment the question is confirmed: no database
-   * round trip, no re-retrieval when context was prefetched, tokens rendered as
-   * they arrive.
+   * LIVE answer path. Can run in two modes:
+   *  - confirmed  : the question is final, tokens paint as they arrive.
+   *  - speculative: started on Deepgram's eager end-of-turn. The model runs and
+   *    its text is buffered but NEVER shown; on confirmation the same in-flight
+   *    request is promoted and the buffer is flushed in one paint. If the
+   *    interviewer keeps talking, the request is aborted and the text discarded.
    */
   const streamLiveAnswer = useCallback(
-    async (turn: Turn, questionText: string, category: string) => {
-      abortRef.current?.abort();
+    async (
+      turn: Turn,
+      questionText: string,
+      category: string,
+      opts: { speculative?: boolean } = {},
+    ) => {
+      const speculative = opts.speculative === true;
       const controller = new AbortController();
-      abortRef.current = controller;
+      if (speculative) {
+        turn.spec = {
+          question: questionText,
+          category,
+          controller,
+          buffer: "",
+          promoted: false,
+          aborted: false,
+          flush: null,
+        };
+        turn.timer.speculative = true;
+        turnStats.current.specStarted += 1;
+      } else {
+        abortRef.current?.abort();
+        abortRef.current = controller;
+      }
       const timer = turn.timer;
       turn.status = "generating";
-      patchDiag({ aiState: "generating", firstTokenMs: null });
+      if (!speculative) patchDiag({ aiState: "generating", firstTokenMs: null });
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) {
-        pushError("Your session expired. Please sign in again.");
+        if (!speculative) pushError("Your session expired. Please sign in again.");
         return;
       }
 
@@ -420,21 +469,54 @@ export function useCopilotSession(opts: Options) {
       }
       timer.contextPrefetch = contextKey ? "hit" : turn.prefetch ? "miss" : "none";
 
+
+      // Keep the live prompt small on purpose: the caps in copilot.server are
+      // maximums, these are the targets for the first automatic answer.
       const recentConversation = segmentsRef.current
-        .slice(-12)
+        .slice(-6)
         .map(
           (s) =>
             `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
         )
-        .join("\n");
-      const priorQna = questionsRef.current
-        .slice(0, 3)
-        .map((q) => `Q: ${q.text}\nSuggested: ${q.answer.slice(0, 240)}`)
-        .join("\n\n");
+        .join("\n")
+        .slice(-500);
+      const isFollowUp =
+        questionsRef.current.length > 0 &&
+        (questionText.trim().length < 60 ||
+          /\b(that|those|it|this|they|you just|also|and how|what about)\b/i.test(questionText));
+      const priorQna = isFollowUp
+        ? questionsRef.current
+            .slice(0, 1)
+            .map((q) => `Q: ${q.text}\nSuggested: ${q.answer.slice(0, 200)}`)
+            .join("\n\n")
+        : "";
 
-      timer.mark("aiRequestStart");
+      timer.remark("aiRequestStart");
       let answer = "";
       let firstToken: number | null = null;
+
+      const spec = turn.spec;
+      const paint = (snapshot: string) =>
+        scheduleFlush(() => {
+          timer.mark("aiFirstRender");
+          setQuestions((prev) =>
+            prev.map((q) =>
+              q.id === turn.id ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
+            ),
+          );
+          patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
+          publishWaterfall(timer);
+        });
+      if (spec) {
+        // Promotion: the confirmed question matched — flush everything the model
+        // has already produced in one paint, then keep streaming normally.
+        spec.flush = () => {
+          spec.promoted = true;
+          timer.speculativeReused = true;
+          timer.bufferedCharsAtConfirm = answer.length;
+          if (answer) paint(answer);
+        };
+      }
 
       try {
         const res = await fetch("/api/live-answer", {
@@ -448,6 +530,7 @@ export function useCopilotSession(opts: Options) {
             contextKey,
             recentConversation,
             priorQna,
+            isFollowUp,
           }),
         });
         timer.mark("aiResponseHeaders");
@@ -457,6 +540,11 @@ export function useCopilotSession(opts: Options) {
 
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
+          if (speculative && !spec?.promoted) {
+            turn.spec = null;
+            turn.status = "listening";
+            return;
+          }
           const message =
             res.status === 429
               ? "AI rate limit reached — try again in a moment."
@@ -503,21 +591,24 @@ export function useCopilotSession(opts: Options) {
                 );
               }
               answer += delta;
-              const snapshot = answer;
-              scheduleFlush(() => {
-                timer.mark("aiFirstRender");
-                setQuestions((prev) =>
-                  prev.map((q) =>
-                    q.id === turn.id ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
-                  ),
-                );
-                patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
-                publishWaterfall(timer);
-              });
+              if (spec && !spec.promoted) {
+                // Generated, but deliberately invisible until the turn confirms.
+                spec.buffer = answer;
+                continue;
+              }
+              paint(answer);
             } catch {
               /* partial frame */
             }
           }
+        }
+
+        if (spec && !spec.promoted) {
+          // Stream finished while still unconfirmed: hold the text, promotion
+          // will paint it instantly when the turn is confirmed.
+          spec.buffer = answer;
+          timer.mark("aiComplete");
+          return;
         }
 
         timer.mark("aiComplete");
@@ -556,10 +647,20 @@ export function useCopilotSession(opts: Options) {
           await supabase.from("detected_questions").update({ status: "answered" }).eq("id", dbId);
         })();
       } catch (error) {
-        turn.status = "completed";
         if ((error as Error).name === "AbortError") {
+          if (speculative && !spec?.promoted) {
+            // Abandoned speculation: the user never saw a character of it.
+            turn.spec = null;
+            return;
+          }
+          turn.status = "completed";
           patchDiag({ aiState: "stopped" });
           setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "stopped" } : q)));
+          return;
+        }
+        turn.status = "completed";
+        if (speculative && !spec?.promoted) {
+          turn.spec = null;
           return;
         }
         patchDiag({ aiState: "error" });
@@ -567,6 +668,7 @@ export function useCopilotSession(opts: Options) {
         setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
       }
     },
+
     [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
   );
 
@@ -740,11 +842,35 @@ export function useCopilotSession(opts: Options) {
       ]);
 
       void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
-      if (optsRef.current.autoGenerate) void streamLiveAnswer(turn, question, category);
-      else turn.status = "completed";
+
+      if (!optsRef.current.autoGenerate) {
+        turn.spec?.controller.abort();
+        turn.spec = null;
+        turn.status = "completed";
+        return;
+      }
+
+      // Reuse the in-flight speculative generation when the confirmed question is
+      // essentially the eager-end-of-turn text: its head start becomes our TTFT.
+      const spec = turn.spec;
+      if (spec && !spec.aborted && similar(normalize(spec.question), normalize(question)) > 0.7) {
+        turnStats.current.specReused += 1;
+        spec.flush?.();
+        publishWaterfall(turn.timer);
+        return;
+      }
+      if (spec) {
+        turnStats.current.specAborted += 1;
+        spec.aborted = true;
+        spec.controller.abort();
+        turn.spec = null;
+        turn.timer.speculativeReused = false;
+      }
+      void streamLiveAnswer(turn, question, category);
     },
-    [patchDiag, persistQuestion, streamLiveAnswer],
+    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall],
   );
+
 
   /**
    * Decide a completed turn. The local gate answers the vast majority instantly;
@@ -871,9 +997,20 @@ export function useCopilotSession(opts: Options) {
 
       if (!result.isFinal) {
         if (result.event === "turn_resumed") {
-          // The speaker kept going: the speculative end-of-turn was wrong.
+          // The speaker kept going: the speculative end-of-turn was wrong, so any
+          // hidden generation is thrown away before it can ever be seen.
           const turn = turnRef.current;
-          if (turn && turn.status === "preparing") turnStats.current.cancelled += 1;
+          if (turn) {
+            if (turn.status === "preparing") turnStats.current.cancelled += 1;
+            if (turn.spec && !turn.spec.promoted) {
+              turnStats.current.specAborted += 1;
+              turn.spec.aborted = true;
+              turn.spec.controller.abort();
+              turn.spec = null;
+              turn.timer.speculativeCancelled = true;
+              turn.status = "listening";
+            }
+          }
           return;
         }
         setInterim((prev) => ({ ...prev, [source]: result.text }));
@@ -884,11 +1021,34 @@ export function useCopilotSession(opts: Options) {
           if (result.event === "eager_end_of_turn") {
             turn.timer.remark("speechEnd");
             turn.timer.mark("sttStableInterim");
+            turn.timer.mark("eagerEot");
+            schedulePrefetch(turn, result.text);
+            // Speculative head start: run the real answer request now, invisibly.
+            if (
+              optsRef.current.autoGenerate &&
+              !turn.spec &&
+              turn.status !== "generating" &&
+              turn.status !== "confirmed"
+            ) {
+              const guess = result.text.trim();
+              const verdict = fastQuestionGate(guess);
+              if (
+                verdict.decision === "question" &&
+                verdict.confidence >= optsRef.current.confidenceThreshold
+              ) {
+                turn.timer.mark("speculativeStart");
+                void streamLiveAnswer(turn, verdict.question, verdict.category, {
+                  speculative: true,
+                });
+              }
+            }
+            return;
           }
           schedulePrefetch(turn, result.text);
         }
         return;
       }
+
       setInterim((prev) => ({ ...prev, [source]: "" }));
 
       const norm = normalize(result.text);
@@ -1371,7 +1531,12 @@ export function useCopilotSession(opts: Options) {
       turnStatus: turnRef.current?.status ?? "listening",
       speculativePrepared: turnStats.current.prepared,
       speculativeCancelled: turnStats.current.cancelled,
+      specStarted: turnStats.current.specStarted,
+      specReused: turnStats.current.specReused,
+      specAborted: turnStats.current.specAborted,
       gateRejected: turnStats.current.gateRejected,
+
+
       classifierCalls: turnStats.current.classifierCalls,
       companionState,
 
