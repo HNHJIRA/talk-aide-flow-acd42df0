@@ -1531,7 +1531,10 @@ export function useCopilotSession(opts: Options) {
       turnStatus: turnRef.current?.status ?? "listening",
       speculativePrepared: turnStats.current.prepared,
       speculativeCancelled: turnStats.current.cancelled,
-      gateRejected: turnStats.current.gateRejected,
+      specStarted: turnStats.current.specStarted,
+      specReused: turnStats.current.specReused,
+      specAborted: turnStats.current.specAborted,
+
       classifierCalls: turnStats.current.classifierCalls,
       companionState,
 
