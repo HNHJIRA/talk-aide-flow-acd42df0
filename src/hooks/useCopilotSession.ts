@@ -557,6 +557,7 @@ export function useCopilotSession(opts: Options) {
       } else {
         abortRef.current?.abort();
         abortRef.current = controller;
+        turn.answerController = controller;
       }
       const timer = turn.timer;
       turn.status = "generating";
