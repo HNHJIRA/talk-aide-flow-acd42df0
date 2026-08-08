@@ -23,9 +23,11 @@ export type LatencyMark =
   | "contextDone"
   | "aiRequestStart"
   | "aiResponseHeaders"
+  | "streamOpen"
   | "aiFirstToken"
   | "aiFirstRender"
   | "aiComplete";
+
 
 export type TurnStatus =
   | "listening"

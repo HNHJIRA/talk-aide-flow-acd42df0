@@ -19,6 +19,7 @@ import { Route as AuthenticatedNewSessionRouteImport } from './routes/_authentic
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as ApiAnswerStreamRouteImport } from './routes/api/answer-stream'
 import { Route as ApiLiveAnswerRouteImport } from './routes/api/live-answer'
+import { Route as ApiStreamCanaryRouteImport } from './routes/api/stream-canary'
 import { Route as AuthenticatedAdminDesktopReleasesRouteImport } from './routes/_authenticated/admin/desktop-releases'
 import { Route as AuthenticatedHistoryIndexRouteImport } from './routes/_authenticated/history.index'
 import { Route as AuthenticatedHistorySessionIdRouteImport } from './routes/_authenticated/history.$sessionId'
@@ -75,6 +76,11 @@ const ApiLiveAnswerRoute = ApiLiveAnswerRouteImport.update({
   path: '/api/live-answer',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStreamCanaryRoute = ApiStreamCanaryRouteImport.update({
+  id: '/api/stream-canary',
+  path: '/api/stream-canary',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedAdminDesktopReleasesRoute =
   AuthenticatedAdminDesktopReleasesRouteImport.update({
     id: '/admin/desktop-releases',
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
   '/api/live-answer': typeof ApiLiveAnswerRoute
+  '/api/stream-canary': typeof ApiStreamCanaryRoute
   '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -137,6 +144,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
   '/api/live-answer': typeof ApiLiveAnswerRoute
+  '/api/stream-canary': typeof ApiStreamCanaryRoute
   '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
   '/api/live-answer': typeof ApiLiveAnswerRoute
+  '/api/stream-canary': typeof ApiStreamCanaryRoute
   '/_authenticated/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/_authenticated/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/_authenticated/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -175,6 +184,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/answer-stream'
     | '/api/live-answer'
+    | '/api/stream-canary'
     | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
@@ -192,6 +202,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/answer-stream'
     | '/api/live-answer'
+    | '/api/stream-canary'
     | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
@@ -210,6 +221,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/api/answer-stream'
     | '/api/live-answer'
+    | '/api/stream-canary'
     | '/_authenticated/admin/desktop-releases'
     | '/_authenticated/history/$sessionId'
     | '/_authenticated/session/$sessionId'
@@ -225,6 +237,7 @@ export interface RootRouteChildren {
   DownloadRoute: typeof DownloadRoute
   ApiAnswerStreamRoute: typeof ApiAnswerStreamRoute
   ApiLiveAnswerRoute: typeof ApiLiveAnswerRoute
+  ApiStreamCanaryRoute: typeof ApiStreamCanaryRoute
   ApiPublicDesktopReleaseRoute: typeof ApiPublicDesktopReleaseRoute
   ApiPublicCompanionPairRoute: typeof ApiPublicCompanionPairRoute
 }
@@ -299,6 +312,13 @@ declare module '@tanstack/react-router' {
       path: '/api/live-answer'
       fullPath: '/api/live-answer'
       preLoaderRoute: typeof ApiLiveAnswerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stream-canary': {
+      id: '/api/stream-canary'
+      path: '/api/stream-canary'
+      fullPath: '/api/stream-canary'
+      preLoaderRoute: typeof ApiStreamCanaryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/admin/desktop-releases': {
@@ -379,6 +399,7 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadRoute: DownloadRoute,
   ApiAnswerStreamRoute: ApiAnswerStreamRoute,
   ApiLiveAnswerRoute: ApiLiveAnswerRoute,
+  ApiStreamCanaryRoute: ApiStreamCanaryRoute,
   ApiPublicDesktopReleaseRoute: ApiPublicDesktopReleaseRoute,
   ApiPublicCompanionPairRoute: ApiPublicCompanionPairRoute,
 }
