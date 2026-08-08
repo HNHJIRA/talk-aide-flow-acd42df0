@@ -1755,7 +1755,7 @@ export function useCopilotSession(opts: Options) {
     abortRef.current?.abort();
     if (detectTimer.current) clearTimeout(detectTimer.current);
     if (prefetchDebounce.current) clearTimeout(prefetchDebounce.current);
-    if (turnRef.current?.decideTimer) clearTimeout(turnRef.current.decideTimer);
+    if (turnRef.current) clearTurnTimers(turnRef.current);
     turnRef.current = null;
     micStt.current?.stop();
 
