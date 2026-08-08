@@ -1430,14 +1430,16 @@ export function useCopilotSession(opts: Options) {
 
       if (!drivesDetection) return;
 
-      const turn = currentTurn();
+      const turn = activeTurn(result.text);
       if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
       turn.timer.mark("speechEnd", lastRemoteVoiceAt.current ?? performance.now());
       turn.timer.remark("sttFinal");
+      turn.lastSpeechAt = performance.now();
       // A "final" is one SEGMENT of a logical turn, never the turn itself: keep
-      // assembling until the sentence looks finished.
+      // assembling until the sentence looks finished — but never past the
+      // Stage C silence deadline.
       turn.segments.push(result.text.trim());
       if (turn.segments.length > 1) turnStats.current.merged += 1;
       turn.text = turn.segments.join(" ").trim().slice(-600);
@@ -1451,21 +1453,27 @@ export function useCopilotSession(opts: Options) {
         segments: turn.segments.length,
         assembled: turn.text.slice(-160),
         continuation: cont.incomplete ? `holding — ${cont.reason}` : cont.reason,
+        revision: turn.revision,
+        stage: cont.incomplete ? "B — likely continuation" : "A — short pause",
       });
 
-      // Grace window: an unfinished utterance waits for the rest of the sentence
-      // instead of committing a half question. Flux's confirmed EndOfTurn on a
-      // complete sentence still decides immediately.
+      // Stage A/B grace window: an unfinished utterance waits for the rest of the
+      // sentence instead of committing a half question. Flux's confirmed EndOfTurn
+      // on a complete sentence still decides immediately.
       const delay = cont.incomplete
-        ? turn.resumedCount > 0
-          ? 450
-          : 320
+        ? TURN_INCOMPLETE_GRACE_MS
         : result.event === "final" && sttProfileRef.current === "flux"
           ? 0
           : /[?.!]\s*$/.test(result.text)
             ? 120
-            : 320;
-      if (cont.incomplete) turnStats.current.graceHolds += 1;
+            : TURN_SHORT_GRACE_MS;
+      if (cont.incomplete) {
+        turnStats.current.graceHolds += 1;
+        // Warm the answer during Stage B so the hard commit is not a cold start.
+        scheduleSpeculation(turn, TURN_SHORT_GRACE_MS);
+      }
+      // Stage C backstop: bounded silence, always commits.
+      armHardCommit(turn);
       if (delay === 0) void decideTurn(turn);
       else
         turn.decideTimer = setTimeout(() => {
@@ -1473,8 +1481,18 @@ export function useCopilotSession(opts: Options) {
           void decideTurn(turn);
         }, delay);
     },
-    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn, newTurn],
+    [
+      persistSegment,
+      patchDiag,
+      activeTurn,
+      schedulePrefetch,
+      decideTurn,
+      armHardCommit,
+      scheduleSpeculation,
+      streamLiveAnswer,
+    ],
   );
+
 
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
