@@ -16,7 +16,12 @@ import {
   type TurnStatus,
 } from "@/lib/latency";
 
-import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
+import {
+  continuationVerdict,
+  fastQuestionGate,
+  isPrefetchWorthy,
+  topicTerms,
+} from "@/lib/question-gate";
 
 import {
   CompanionBridge,
@@ -1059,6 +1064,7 @@ export function useCopilotSession(opts: Options) {
         startMs: number | null;
         endMs: number | null;
         event?: SttEvent;
+        turnIndex?: number | null;
       },
     ) => {
       const isRemote = source !== "microphone";
