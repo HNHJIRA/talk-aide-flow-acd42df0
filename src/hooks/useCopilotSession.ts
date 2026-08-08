@@ -886,9 +886,18 @@ export function useCopilotSession(opts: Options) {
   /** Confirmed question -> UI row + streaming answer. Database writes trail behind. */
   const commitQuestion = useCallback(
     (turn: Turn, question: string, category: string, confidence: number) => {
+      // One logical interviewer turn -> at most one automatic answer, no matter
+      // how many STT segments or speculative restarts it went through.
+      if (turn.answered || answeredTurns.current.has(turn.id)) {
+        turnStats.current.duplicateBlocked += 1;
+        return;
+      }
+      turn.answered = true;
+      answeredTurns.current.add(turn.id);
       lastConfidence.current = confidence;
       patchDiag({ lastQuestion: question, lastConfidence: confidence });
       turn.status = "confirmed";
+
 
       setQuestions((prev) => [
         {
