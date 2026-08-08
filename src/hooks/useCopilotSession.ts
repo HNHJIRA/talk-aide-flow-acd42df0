@@ -1185,7 +1185,82 @@ export function useCopilotSession(opts: Options) {
     [newTurn, isDuplicate, commitQuestion],
   );
 
-  /* ---------------- STT wiring ---------------- */
+  /* ---------------- bounded silence helpers ---------------- */
+
+  /**
+   * Stage C. Anchored to the last moment we actually heard voice, so a pause in
+   * the middle of a sentence can never hold the turn open indefinitely.
+   */
+  const armHardCommit = useCallback(
+    (turn: Turn) => {
+      if (turn.hardTimer) clearTimeout(turn.hardTimer);
+      turn.hardTimer = null;
+      if (turn.answered) return;
+      const delay = Math.max(120, TURN_HARD_COMMIT_MS - (performance.now() - turn.lastSpeechAt));
+      turn.hardTimer = setTimeout(() => {
+        turn.hardTimer = null;
+        if (turn.answered) return;
+        turnStats.current.hardCommits += 1;
+        setTurnView((prev) => ({
+          ...prev,
+          stage: "C — hard commit",
+          continuation: "hard commit — silence deadline reached",
+        }));
+        void decideTurn(turn, { hard: true });
+      }, delay);
+    },
+    [decideTurn],
+  );
+
+  /** Stage B: warm the answer while the turn is still (possibly) continuing. */
+  const scheduleSpeculation = useCallback(
+    (turn: Turn, delay: number) => {
+      if (turn.specTimer) clearTimeout(turn.specTimer);
+      turn.specTimer = setTimeout(() => {
+        turn.specTimer = null;
+        if (turn.answered || turn.spec || !optsRef.current.autoGenerate) return;
+        const text = (turn.text || turn.lastInterim).trim();
+        if (!text) return;
+        const verdict = fastQuestionGate(text);
+        if (
+          verdict.decision !== "question" ||
+          verdict.confidence < optsRef.current.confidenceThreshold
+        )
+          return;
+        setTurnView((prev) => ({ ...prev, stage: "B — likely continuation (speculating)" }));
+        turn.timer.mark("speculativeStart");
+        void streamLiveAnswer(turn, verdict.question, verdict.category, { speculative: true });
+      }, delay);
+    },
+    [streamLiveAnswer],
+  );
+
+  /**
+   * New interviewer speech arriving right after a commit. A fragment that reads
+   * like the rest of the same sentence revises the committed turn; anything that
+   * reads like a fresh question starts a new one.
+   */
+  const activeTurn = useCallback(
+    (text: string) => {
+      const prev = turnRef.current;
+      if (!prev || !prev.answered) return currentTurn();
+      const withinWindow =
+        prev.committedAt != null && performance.now() - prev.committedAt <= LATE_CONTINUATION_MS;
+      const norm = normalize(text);
+      const gate = fastQuestionGate(text);
+      const looksLikeNewQuestion =
+        gate.decision === "question" &&
+        !/^(and|so|but|or|because|which|that|to|with|for|about|like)\b/.test(norm);
+      if (withinWindow && prev.hardCommitted && !looksLikeNewQuestion && norm) {
+        reopenTurn(prev);
+        return prev;
+      }
+      return newTurn();
+    },
+    [currentTurn, newTurn, reopenTurn],
+  );
+
+
 
   const handleResult = useCallback(
     (
