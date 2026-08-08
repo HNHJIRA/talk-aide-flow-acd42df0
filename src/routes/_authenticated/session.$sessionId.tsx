@@ -333,7 +333,12 @@ function LiveSession() {
                   ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
                   ["Microphone role", debug.micRole],
                   ["Detection sources", debug.detectionSources],
+                  ["STT profile (interviewer)", debug.sttProfile],
+                  ["Turn state", debug.turnStatus],
+                  ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
+                  ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
                   ["Companion state", debug.companionState],
+
                   ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
                   ["Companion capture backend", debug.companionBackend],
                   ["Interviewer capture method", debug.remoteCaptureMethod],
