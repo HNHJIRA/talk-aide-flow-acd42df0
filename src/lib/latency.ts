@@ -82,13 +82,16 @@ export class TurnTimer {
   readonly marks: TurnTimings = {};
   classifierUsed = false;
   contextPrefetch: "hit" | "miss" | "none" = "none";
-  /** Server-reported ms spent between request arrival and first upstream token. */
+  /** Server ms from request arrival to the first upstream byte forwarded. */
   serverTtftMs: number | null = null;
+  /** Server ms from request arrival to the gateway request being dispatched. */
+  serverDispatchMs: number | null = null;
   /* --- speculative generation --- */
   speculative = false;
   speculativeReused = false;
   speculativeCancelled = false;
   bufferedCharsAtConfirm: number | null = null;
+
 
   constructor(turnId: string) {
     this.turnId = turnId;
