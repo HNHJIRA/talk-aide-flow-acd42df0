@@ -993,9 +993,20 @@ export function useCopilotSession(opts: Options) {
 
       if (!result.isFinal) {
         if (result.event === "turn_resumed") {
-          // The speaker kept going: the speculative end-of-turn was wrong.
+          // The speaker kept going: the speculative end-of-turn was wrong, so any
+          // hidden generation is thrown away before it can ever be seen.
           const turn = turnRef.current;
-          if (turn && turn.status === "preparing") turnStats.current.cancelled += 1;
+          if (turn) {
+            if (turn.status === "preparing") turnStats.current.cancelled += 1;
+            if (turn.spec && !turn.spec.promoted) {
+              turnStats.current.specAborted += 1;
+              turn.spec.aborted = true;
+              turn.spec.controller.abort();
+              turn.spec = null;
+              turn.timer.speculativeAborted = true;
+              turn.status = "listening";
+            }
+          }
           return;
         }
         setInterim((prev) => ({ ...prev, [source]: result.text }));
@@ -1006,11 +1017,34 @@ export function useCopilotSession(opts: Options) {
           if (result.event === "eager_end_of_turn") {
             turn.timer.remark("speechEnd");
             turn.timer.mark("sttStableInterim");
+            turn.timer.mark("eagerEot");
+            schedulePrefetch(turn, result.text);
+            // Speculative head start: run the real answer request now, invisibly.
+            if (
+              optsRef.current.autoGenerate &&
+              !turn.spec &&
+              turn.status !== "generating" &&
+              turn.status !== "confirmed"
+            ) {
+              const guess = result.text.trim();
+              const verdict = fastQuestionGate(guess);
+              if (
+                verdict.decision === "question" &&
+                verdict.confidence >= optsRef.current.confidenceThreshold
+              ) {
+                turn.timer.mark("speculativeStart");
+                void streamLiveAnswer(turn, verdict.question, verdict.category, {
+                  speculative: true,
+                });
+              }
+            }
+            return;
           }
           schedulePrefetch(turn, result.text);
         }
         return;
       }
+
       setInterim((prev) => ({ ...prev, [source]: "" }));
 
       const norm = normalize(result.text);
