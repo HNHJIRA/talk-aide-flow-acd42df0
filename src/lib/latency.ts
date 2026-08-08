@@ -75,6 +75,11 @@ export class TurnTimer {
   contextPrefetch: "hit" | "miss" | "none" = "none";
   /** Server-reported ms spent between request arrival and first upstream token. */
   serverTtftMs: number | null = null;
+  /* --- speculative generation --- */
+  speculative = false;
+  speculativeReused = false;
+  speculativeCancelled = false;
+  bufferedCharsAtConfirm: number | null = null;
 
   constructor(turnId: string) {
     this.turnId = turnId;
@@ -112,6 +117,12 @@ export class TurnTimer {
       browserRenderMs: diff(m.aiFirstToken, m.aiFirstRender),
       totalMs: diff(anchor, m.aiFirstRender),
       completeMs: diff(anchor, m.aiComplete),
+      speculative: this.speculative,
+      speculativeReused: this.speculativeReused,
+      speculativeCancelled: this.speculativeCancelled,
+      headStartMs: diff(m.aiRequestStart, m.sttFinal),
+      bufferedCharsAtConfirm: this.bufferedCharsAtConfirm,
+      visibleAfterConfirmMs: diff(m.sttFinal, m.aiFirstRender),
     };
   }
 }
@@ -131,7 +142,14 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
   browserRenderMs: null,
   totalMs: null,
   completeMs: null,
+  speculative: false,
+  speculativeReused: false,
+  speculativeCancelled: false,
+  headStartMs: null,
+  bufferedCharsAtConfirm: null,
+  visibleAfterConfirmMs: null,
 };
+
 
 export const ms = (value: number | null) => (value == null ? "—" : `${value} ms`);
 
