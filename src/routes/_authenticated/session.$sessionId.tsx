@@ -25,6 +25,7 @@ import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { formatDuration, PLATFORM_LABELS } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { LatencyWaterfallPanel } from "@/components/copilot/LatencyWaterfall";
 
 export const Route = createFileRoute("/_authenticated/session/$sessionId")({
   head: () => ({
@@ -105,6 +106,8 @@ function LiveSession() {
     online,
     elapsed,
     debug,
+    latency,
+    latencyHistory,
     companionHealth,
     companionState,
     connectMicrophone,
