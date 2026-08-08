@@ -169,11 +169,32 @@ export function LatencyWaterfallPanel({
               value={`${aiCall.promptChars ?? "—"} chars (resume ${aiCall.resumeChars ?? "—"}, conv ${aiCall.conversationChars ?? "—"}, job ${aiCall.jobChars ?? "—"})`}
             />
             <Row label="Resume context" value={`${aiCall.contextChars} chars (${aiCall.context})`} />
+            {aiCall.phases ? (
+              <>
+                <Row
+                  label="Server: auth"
+                  value={`${aiCall.phases.authMs} ms${aiCall.phases.authCached ? " (cached)" : " (verified)"}`}
+                />
+                <Row label="Server: session ctx" value={ms(aiCall.phases.sessionMs)} />
+                <Row
+                  label="Server: resume ctx"
+                  value={`${aiCall.phases.contextMs} ms (${aiCall.phases.contextSource})`}
+                />
+                <Row label="Server: prompt build" value={ms(aiCall.phases.promptMs)} />
+                <Row label="Server: headers flushed" value={ms(aiCall.phases.preludeMs ?? null)} />
+                <Row
+                  label="Server: first byte forwarded"
+                  value={ms(aiCall.phases.firstForwardMs ?? null)}
+                />
+              </>
+            ) : null}
             <Row label="Server → gateway sent" value={ms(aiCall.serverRequestSentMs ?? null)} />
             <Row label="Upstream headers" value={ms(aiCall.upstreamHeadersMs)} />
             <Row label="Upstream first event" value={ms(aiCall.upstreamFirstEventMs ?? null)} />
             <Row label="Upstream first delta" value={ms(aiCall.upstreamFirstDeltaMs)} />
             <Row label="Generation complete" value={ms(aiCall.upstreamTotalMs)} />
+
+
 
           </dl>
         </div>
