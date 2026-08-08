@@ -58,13 +58,20 @@ export type LatencyWaterfall = {
   speculative: boolean;
   speculativeReused: boolean;
   speculativeCancelled: boolean;
-  /** ms the AI request ran before the confirmed end of turn. */
+  /** ms the AI request ran before the confirmed end of turn (client clock). */
   headStartMs: number | null;
+  /** ms the PROVIDER was already generating before the confirmed end of turn. */
+  providerHeadStartMs: number | null;
+  /** aiRequestStart -> first byte of the SSE prelude (pure transport + server prelude). */
+  streamOpenMs: number | null;
+  /** first upstream byte forwarded by the server -> first token seen by the browser. */
+  transportOverheadMs: number | null;
   /** characters already generated (and hidden) at confirmation. */
   bufferedCharsAtConfirm: number | null;
   /** confirmed end of turn -> first visible token. This is the felt latency. */
   visibleAfterConfirmMs: number | null;
 };
+
 
 
 const diff = (a: number | undefined, b: number | undefined) =>
