@@ -9,6 +9,8 @@ export type LatencyMark =
   | "audioFirstPacket"
   | "sttFirstInterim"
   | "sttStableInterim"
+  | "eagerEot"
+  | "speculativeStart"
   | "speechEnd"
   | "sttFinal"
   | "gateStart"
@@ -50,7 +52,18 @@ export type LatencyWaterfall = {
   browserRenderMs: number | null;
   totalMs: number | null;
   completeMs: number | null;
+  /* --- speculative head start --- */
+  speculative: boolean;
+  speculativeReused: boolean;
+  speculativeCancelled: boolean;
+  /** ms the AI request ran before the confirmed end of turn. */
+  headStartMs: number | null;
+  /** characters already generated (and hidden) at confirmation. */
+  bufferedCharsAtConfirm: number | null;
+  /** confirmed end of turn -> first visible token. This is the felt latency. */
+  visibleAfterConfirmMs: number | null;
 };
+
 
 const diff = (a: number | undefined, b: number | undefined) =>
   a != null && b != null ? Math.round(b - a) : null;
