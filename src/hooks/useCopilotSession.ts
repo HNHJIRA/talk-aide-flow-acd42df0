@@ -139,6 +139,18 @@ export type DebugInfo = {
   errors: string[];
 };
 
+/* ---------------- interviewer turn timing (bounded silence) ----------------
+ * Stage A  0 → 350 ms      short natural pause: keep the turn open, decide a
+ *                          complete-looking sentence immediately.
+ * Stage B  350 → 700 ms    likely continuation: still open, but speculative
+ *                          generation starts so the answer is warm.
+ * Stage C  ≥ 1000 ms       hard commit: answer even if the text looks unfinished.
+ * Late continuation window after commit: reopen and revise the SAME turn.
+ */
+const TURN_SHORT_GRACE_MS = 350;
+const TURN_INCOMPLETE_GRACE_MS = 700;
+const TURN_HARD_COMMIT_MS = 1000;
+const LATE_CONTINUATION_MS = 1800;
 
 
 const normalize = (text: string) =>
