@@ -412,8 +412,10 @@ export function useCopilotSession(opts: Options) {
   const publishWaterfall = useCallback((timer: TurnTimer) => {
     const wf = timer.waterfall();
     setLatency(wf);
-    setLatencyHistory((prev) => [wf, ...prev].slice(0, 8));
+    // One entry per turn: later paints of the same turn replace the earlier one.
+    setLatencyHistory((prev) => [wf, ...prev.filter((h) => h.turnId !== wf.turnId)].slice(0, 8));
   }, []);
+
 
   /**
    * LIVE answer path. Can run in two modes:
