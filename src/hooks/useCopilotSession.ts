@@ -1494,6 +1494,8 @@ export function useCopilotSession(opts: Options) {
     [
       persistSegment,
       patchDiag,
+      currentTurn,
+      newTurn,
       activeTurn,
       schedulePrefetch,
       decideTurn,
