@@ -1070,11 +1070,29 @@ export function useCopilotSession(opts: Options) {
         (isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect));
 
       if (!result.isFinal) {
+        if (result.event === "start_of_turn") {
+          // Deepgram Flux says a brand-new speaking turn began: only start a new
+          // logical turn if the previous one is already resolved.
+          if (drivesDetection) {
+            const prev = turnRef.current;
+            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn();
+            const turn = currentTurn();
+            if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
+          }
+          return;
+        }
         if (result.event === "turn_resumed") {
           // The speaker kept going: the speculative end-of-turn was wrong, so any
-          // hidden generation is thrown away before it can ever be seen.
+          // hidden generation is thrown away before it can ever be seen and the
+          // logical turn stays open to absorb the rest of the sentence.
           const turn = turnRef.current;
           if (turn) {
+            turn.resumedCount += 1;
+            turnStats.current.resumed += 1;
+            if (turn.decideTimer) {
+              clearTimeout(turn.decideTimer);
+              turn.decideTimer = null;
+            }
             if (turn.status === "preparing") turnStats.current.cancelled += 1;
             if (turn.spec && !turn.spec.promoted) {
               turnStats.current.specAborted += 1;
@@ -1082,13 +1100,22 @@ export function useCopilotSession(opts: Options) {
               turn.spec.controller.abort();
               turn.spec = null;
               turn.timer.speculativeCancelled = true;
-              turn.status = "listening";
             }
+            if (!turn.answered) turn.status = "listening";
+            setTurnView((prev) => ({ ...prev, continuation: "turn resumed — still listening" }));
           }
           return;
         }
         setInterim((prev) => ({ ...prev, [source]: result.text }));
         if (drivesDetection && result.text.trim()) {
+          const pending = turnRef.current;
+          // More speech while a decision was waiting out its grace window: the
+          // turn is not over, so cancel the pending decision and keep merging.
+          if (pending && pending.decideTimer && !pending.answered) {
+            clearTimeout(pending.decideTimer);
+            pending.decideTimer = null;
+            turnStats.current.merged += 1;
+          }
           const turn = currentTurn();
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
@@ -1097,15 +1124,19 @@ export function useCopilotSession(opts: Options) {
             turn.timer.mark("sttStableInterim");
             turn.timer.mark("eagerEot");
             schedulePrefetch(turn, result.text);
-            // Speculative head start: run the real answer request now, invisibly.
+            const assembled = `${turn.segments.join(" ")} ${result.text}`.trim();
+            const cont = continuationVerdict(assembled);
+            // Speculative head start: run the real answer request now, invisibly —
+            // but never on an obviously unfinished sentence.
             if (
               optsRef.current.autoGenerate &&
               !turn.spec &&
+              !cont.incomplete &&
+              !turn.answered &&
               turn.status !== "generating" &&
               turn.status !== "confirmed"
             ) {
-              const guess = result.text.trim();
-              const verdict = fastQuestionGate(guess);
+              const verdict = fastQuestionGate(assembled);
               if (
                 verdict.decision === "question" &&
                 verdict.confidence >= optsRef.current.confidenceThreshold
@@ -1122,6 +1153,7 @@ export function useCopilotSession(opts: Options) {
         }
         return;
       }
+
 
       setInterim((prev) => ({ ...prev, [source]: "" }));
 
