@@ -1853,6 +1853,8 @@ export function useCopilotSession(opts: Options) {
     const id = setInterval(() => {
       setMicLevel(micPcm.current?.getLevel() ?? 0);
       setMeetingLevel(meetingPcm.current?.getLevel() ?? 0);
+      const turn = turnRef.current;
+      setTurnSilenceMs(turn ? Math.round(performance.now() - turn.lastSpeechAt) : 0);
     }, 120);
     return () => clearInterval(id);
   }, []);
