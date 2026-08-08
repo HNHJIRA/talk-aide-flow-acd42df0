@@ -224,14 +224,15 @@ export class SttConnection {
 
     const map: Record<string, SttEvent | undefined> = {
       Update: "interim",
-      StartOfTurn: undefined,
+      StartOfTurn: "start_of_turn",
       EagerEndOfTurn: "eager_end_of_turn",
       TurnResumed: "turn_resumed",
       EndOfTurn: "final",
     };
     const mapped = map[evt];
     if (!mapped) return;
-    if (mapped !== "turn_resumed" && !text) return;
+    if (mapped !== "turn_resumed" && mapped !== "start_of_turn" && !text) return;
+
 
     this.opts.onResult({
       text,
