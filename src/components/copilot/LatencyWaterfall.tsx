@@ -81,7 +81,30 @@ export function LatencyWaterfallPanel({
         <Row label="Token → painted" value={ms(latency.browserRenderMs)} />
         <Row label="Speech end → first token on screen" value={ms(latency.totalMs)} />
         <Row label="Speech end → answer complete" value={ms(latency.completeMs)} />
+        <Row
+          label="Speculative generation"
+          value={
+            !latency.speculative
+              ? "not started"
+              : latency.speculativeReused
+                ? "reused on final EOT"
+                : latency.speculativeCancelled
+                  ? "aborted (turn resumed)"
+                  : "started"
+          }
+        />
+        <Row label="AI head start before final" value={ms(latency.headStartMs)} />
+        <Row
+          label="Hidden text at confirm"
+          value={
+            latency.bufferedCharsAtConfirm == null
+              ? "—"
+              : `${latency.bufferedCharsAtConfirm} chars`
+          }
+        />
+        <Row label="Confirm → visible" value={ms(latency.visibleAfterConfirmMs)} />
         <Row label={`Median of last ${measured.length} turns`} value={ms(median)} />
+
       </dl>
 
       {history.length > 1 ? (
