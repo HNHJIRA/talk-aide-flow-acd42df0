@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
-import { SttConnection, type SttState } from "@/lib/stt/stt-connection";
-import { createSttSession, detectQuestion } from "@/lib/copilot.functions";
+import {
+  SttConnection,
+  type SttState,
+  type SttEvent,
+  type SttProfile,
+} from "@/lib/stt/stt-connection";
+import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
+import { TurnTimer, EMPTY_WATERFALL, type LatencyWaterfall, type TurnStatus } from "@/lib/latency";
+import { fastQuestionGate, isPrefetchWorthy, prefetchTopic } from "@/lib/question-gate";
+
 import {
   CompanionBridge,
   detectCompanion,
