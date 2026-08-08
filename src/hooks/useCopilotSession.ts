@@ -751,6 +751,8 @@ export function useCopilotSession(opts: Options) {
         }
 
         timer.mark("aiComplete");
+        // A newer revision of this turn owns the row now: discard this answer.
+        if (stale()) return;
         turn.status = "completed";
         setQuestions((prev) =>
           prev.map((q) => (q.id === turn.id ? { ...q, answer, status: "answered" } : q)),
