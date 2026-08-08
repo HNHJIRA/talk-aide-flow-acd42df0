@@ -179,8 +179,24 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
 
 export const ms = (value: number | null) => (value == null ? "—" : `${value} ms`);
 
+/** Server-side phase breakdown of one live request, ms from request arrival. */
+export type LivePhaseMeta = {
+  authMs: number;
+  authCached: boolean;
+  sessionMs: number;
+  contextMs: number;
+  contextSource: string;
+  promptMs: number;
+  preludeMs?: number;
+  dispatchMs?: number;
+  headersMs?: number;
+  firstForwardMs?: number | null;
+};
+
 /** Server-reported configuration and usage for one live AI answer call. */
 export type LiveCallMeta = {
+  phases?: LivePhaseMeta;
+
   requestedModel: string;
   actualModel: string | null;
   provider?: string | null;
