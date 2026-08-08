@@ -1161,7 +1161,7 @@ export function useCopilotSession(opts: Options) {
       commitQuestion(turn, result.question, result.category, result.confidence);
       publishWaterfall(turn.timer);
     },
-    [commitQuestion, isDuplicate, patchDiag, pushError, publishWaterfall],
+    [commitQuestion, isDuplicate, patchDiag, pushError, publishWaterfall, clearTurnTimers],
   );
 
   /**
