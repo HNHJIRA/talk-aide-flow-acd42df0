@@ -566,6 +566,7 @@ export function useCopilotSession(opts: Options) {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          timer.mark("streamOpen");
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
@@ -577,7 +578,30 @@ export function useCopilotSession(opts: Options) {
               const json = JSON.parse(payload) as {
                 choices?: { delta?: { content?: string } }[];
                 ic_meta?: LiveCallMeta;
+                ic_open?: { preludeMs: number };
+                ic_upstream?: { requestSentMs: number; headersMs: number };
+                ic_first?: { firstForwardMs: number };
+                ic_error?: { status: number; message: string };
               };
+              if (json.ic_open) {
+                timer.serverTtftMs = json.ic_open.preludeMs;
+                continue;
+              }
+              if (json.ic_upstream) {
+                timer.serverDispatchMs = json.ic_upstream.requestSentMs;
+                continue;
+              }
+              if (json.ic_first) {
+                // Server-side ms at which the FIRST upstream byte was forwarded:
+                // everything after this is pure transport + browser parsing.
+                timer.serverTtftMs = json.ic_first.firstForwardMs;
+                continue;
+              }
+              if (json.ic_error) {
+                throw Object.assign(new Error(json.ic_error.message), {
+                  status: json.ic_error.status,
+                });
+              }
               if (json.ic_meta) {
                 setAiCall(json.ic_meta);
                 continue;
@@ -598,11 +622,13 @@ export function useCopilotSession(opts: Options) {
                 continue;
               }
               paint(answer);
-            } catch {
+            } catch (frameError) {
+              if (frameError instanceof Error && "status" in frameError) throw frameError;
               /* partial frame */
             }
           }
         }
+
 
         if (spec && !spec.promoted) {
           // Stream finished while still unconfirmed: hold the text, promotion
