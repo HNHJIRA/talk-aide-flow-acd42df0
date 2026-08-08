@@ -1,4 +1,4 @@
-import { ms, type LatencyWaterfall } from "@/lib/latency";
+import { ms, type LatencyWaterfall, type LiveCallMeta } from "@/lib/latency";
 import { cn } from "@/lib/utils";
 
 const BUDGET_MS = 1500;
