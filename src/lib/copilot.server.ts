@@ -192,12 +192,43 @@ export async function retrieveContext(
  * ANSWER_MODEL through /api/answer-stream unchanged.
  * ============================================================ */
 
+/**
+ * Latency preset for the automatic live answer. Server-side only — never sent
+ * to the browser. "fast" is the production default and is benchmark-derived:
+ * gemini-2.5-flash-lite measured a 517 ms median TTFT vs 819 ms for
+ * gemini-3.6-flash and 671–881 ms for the gpt-5.6 family on the same prompt.
+ */
+export const LIVE_LATENCY_MODE = process.env["LIVE_LATENCY_MODE"] ?? "fast";
+
+const LIVE_PRESETS: Record<
+  string,
+  { model: string; effort: string; tier: string; maxOutput: number }
+> = {
+  fast: { model: "google/gemini-2.5-flash-lite", effort: "none", tier: "fast", maxOutput: 220 },
+  balanced: { model: "google/gemini-3.6-flash", effort: "none", tier: "", maxOutput: 320 },
+  quality: { model: "openai/gpt-5.6-terra", effort: "none", tier: "fast", maxOutput: 400 },
+};
+const LIVE_PRESET = LIVE_PRESETS[LIVE_LATENCY_MODE] ?? LIVE_PRESETS["fast"]!;
+
 /** Fast model for the automatic live answer. Overridable without a redeploy. */
-export const LIVE_ANSWER_MODEL = process.env["LIVE_ANSWER_MODEL"] ?? "google/gemini-3.6-flash";
+export const LIVE_ANSWER_MODEL = process.env["LIVE_ANSWER_MODEL"] ?? LIVE_PRESET.model;
 /** "none" removes model thinking latency — measured 1979ms -> 817ms TTFT. */
-export const LIVE_REASONING_EFFORT = process.env["LIVE_REASONING_EFFORT"] ?? "none";
-export const LIVE_SERVICE_TIER = process.env["LIVE_SERVICE_TIER"] ?? "";
-export const LIVE_MAX_OUTPUT = Number(process.env["LIVE_MAX_OUTPUT"] ?? 320);
+export const LIVE_REASONING_EFFORT = process.env["LIVE_REASONING_EFFORT"] ?? LIVE_PRESET.effort;
+/** OpenAI-style fast/priority serving tier; empty string = provider default. */
+export const LIVE_SERVICE_TIER = process.env["LIVE_SERVICE_TIER"] ?? LIVE_PRESET.tier;
+export const LIVE_MAX_OUTPUT = Number(process.env["LIVE_MAX_OUTPUT"] ?? LIVE_PRESET.maxOutput);
+/** Stronger model kept for "More detail" / deep-dive regeneration only. */
+export const LIVE_DEEP_MODEL = process.env["LIVE_DEEP_MODEL"] ?? "openai/gpt-5.6-terra";
+/** Candidates for the dev-only live-answer benchmark. */
+export const LIVE_BENCHMARK_MODELS = [
+  "google/gemini-2.5-flash-lite",
+  "google/gemini-3.6-flash",
+  "google/gemini-3.1-flash-lite",
+  "openai/gpt-5.6-luna",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-sol",
+];
+
 
 type CacheEntry<T> = { at: number; value: T };
 const TTL_MS = 10 * 60 * 1000;
