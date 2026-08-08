@@ -16,7 +16,12 @@ import {
   type TurnStatus,
 } from "@/lib/latency";
 
-import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
+import {
+  continuationVerdict,
+  fastQuestionGate,
+  isPrefetchWorthy,
+  topicTerms,
+} from "@/lib/question-gate";
 
 import {
   CompanionBridge,
@@ -97,6 +102,16 @@ export type DebugInfo = {
   specAborted: number;
   gateRejected: number;
   classifierCalls: number;
+  /* --- interviewer turn assembly --- */
+  turnId: string;
+  turnSegments: number;
+  turnAssembled: string;
+  segmentsMerged: number;
+  turnsResumed: number;
+  graceHolds: number;
+  duplicateAnswersBlocked: number;
+  lastContinuationReason: string;
+
 
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
@@ -299,7 +314,16 @@ export function useCopilotSession(opts: Options) {
     timer: TurnTimer;
     status: TurnStatus;
     text: string;
+    /** Every finalised STT segment that belongs to this logical turn. */
+    segments: string[];
+    /** How many times Deepgram Flux told us the turn kept going. */
+    resumedCount: number;
+    /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
+    turnIndex: number | null;
+    /** One turn id produces at most one automatic answer. */
+    answered: boolean;
     segmentId: string | null;
+
     contextKey: string | null;
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
@@ -337,6 +361,18 @@ export function useCopilotSession(opts: Options) {
     specStarted: 0,
     specReused: 0,
     specAborted: 0,
+    merged: 0,
+    resumed: 0,
+    graceHolds: 0,
+    duplicateBlocked: 0,
+  });
+  /** Turn ids that already produced an automatic answer. */
+  const answeredTurns = useRef<Set<string>>(new Set());
+  const [turnView, setTurnView] = useState({
+    id: "—",
+    segments: 0,
+    assembled: "",
+    continuation: "—",
   });
 
   const newTurn = useCallback(() => {
@@ -346,6 +382,10 @@ export function useCopilotSession(opts: Options) {
       timer: new TurnTimer(id),
       status: "listening",
       text: "",
+      segments: [],
+      resumedCount: 0,
+      turnIndex: null,
+      answered: false,
       segmentId: null,
       contextKey: null,
       prefetch: null,
@@ -356,6 +396,7 @@ export function useCopilotSession(opts: Options) {
     turnRef.current = turn;
     return turn;
   }, []);
+
 
 
   const currentTurn = useCallback(() => {
@@ -850,9 +891,18 @@ export function useCopilotSession(opts: Options) {
   /** Confirmed question -> UI row + streaming answer. Database writes trail behind. */
   const commitQuestion = useCallback(
     (turn: Turn, question: string, category: string, confidence: number) => {
+      // One logical interviewer turn -> at most one automatic answer, no matter
+      // how many STT segments or speculative restarts it went through.
+      if (turn.answered || answeredTurns.current.has(turn.id)) {
+        turnStats.current.duplicateBlocked += 1;
+        return;
+      }
+      turn.answered = true;
+      answeredTurns.current.add(turn.id);
       lastConfidence.current = confidence;
       patchDiag({ lastQuestion: question, lastConfidence: confidence });
       turn.status = "confirmed";
+
 
       setQuestions((prev) => [
         {
@@ -1014,6 +1064,7 @@ export function useCopilotSession(opts: Options) {
         startMs: number | null;
         endMs: number | null;
         event?: SttEvent;
+        turnIndex?: number | null;
       },
     ) => {
       const isRemote = source !== "microphone";
@@ -1025,11 +1076,29 @@ export function useCopilotSession(opts: Options) {
         (isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect));
 
       if (!result.isFinal) {
+        if (result.event === "start_of_turn") {
+          // Deepgram Flux says a brand-new speaking turn began: only start a new
+          // logical turn if the previous one is already resolved.
+          if (drivesDetection) {
+            const prev = turnRef.current;
+            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn();
+            const turn = currentTurn();
+            if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
+          }
+          return;
+        }
         if (result.event === "turn_resumed") {
           // The speaker kept going: the speculative end-of-turn was wrong, so any
-          // hidden generation is thrown away before it can ever be seen.
+          // hidden generation is thrown away before it can ever be seen and the
+          // logical turn stays open to absorb the rest of the sentence.
           const turn = turnRef.current;
           if (turn) {
+            turn.resumedCount += 1;
+            turnStats.current.resumed += 1;
+            if (turn.decideTimer) {
+              clearTimeout(turn.decideTimer);
+              turn.decideTimer = null;
+            }
             if (turn.status === "preparing") turnStats.current.cancelled += 1;
             if (turn.spec && !turn.spec.promoted) {
               turnStats.current.specAborted += 1;
@@ -1037,13 +1106,22 @@ export function useCopilotSession(opts: Options) {
               turn.spec.controller.abort();
               turn.spec = null;
               turn.timer.speculativeCancelled = true;
-              turn.status = "listening";
             }
+            if (!turn.answered) turn.status = "listening";
+            setTurnView((prev) => ({ ...prev, continuation: "turn resumed — still listening" }));
           }
           return;
         }
         setInterim((prev) => ({ ...prev, [source]: result.text }));
         if (drivesDetection && result.text.trim()) {
+          const pending = turnRef.current;
+          // More speech while a decision was waiting out its grace window: the
+          // turn is not over, so cancel the pending decision and keep merging.
+          if (pending && pending.decideTimer && !pending.answered) {
+            clearTimeout(pending.decideTimer);
+            pending.decideTimer = null;
+            turnStats.current.merged += 1;
+          }
           const turn = currentTurn();
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
@@ -1052,15 +1130,19 @@ export function useCopilotSession(opts: Options) {
             turn.timer.mark("sttStableInterim");
             turn.timer.mark("eagerEot");
             schedulePrefetch(turn, result.text);
-            // Speculative head start: run the real answer request now, invisibly.
+            const assembled = `${turn.segments.join(" ")} ${result.text}`.trim();
+            const cont = continuationVerdict(assembled);
+            // Speculative head start: run the real answer request now, invisibly —
+            // but never on an obviously unfinished sentence.
             if (
               optsRef.current.autoGenerate &&
               !turn.spec &&
+              !cont.incomplete &&
+              !turn.answered &&
               turn.status !== "generating" &&
               turn.status !== "confirmed"
             ) {
-              const guess = result.text.trim();
-              const verdict = fastQuestionGate(guess);
+              const verdict = fastQuestionGate(assembled);
               if (
                 verdict.decision === "question" &&
                 verdict.confidence >= optsRef.current.confidenceThreshold
@@ -1077,6 +1159,7 @@ export function useCopilotSession(opts: Options) {
         }
         return;
       }
+
 
       setInterim((prev) => ({ ...prev, [source]: "" }));
 
@@ -1129,17 +1212,41 @@ export function useCopilotSession(opts: Options) {
       if (!drivesDetection) return;
 
       const turn = currentTurn();
+      if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
       turn.timer.mark("speechEnd", lastRemoteVoiceAt.current ?? performance.now());
       turn.timer.remark("sttFinal");
-      turn.text = `${turn.text} ${result.text}`.trim().slice(-600);
+      // A "final" is one SEGMENT of a logical turn, never the turn itself: keep
+      // assembling until the sentence looks finished.
+      turn.segments.push(result.text.trim());
+      if (turn.segments.length > 1) turnStats.current.merged += 1;
+      turn.text = turn.segments.join(" ").trim().slice(-600);
 
       if (turn.decideTimer) clearTimeout(turn.decideTimer);
-      // Flux emits one confirmed EndOfTurn, so decide immediately. The classic
-      // pipeline can split a question across finals: allow a short merge window,
-      // shorter when the utterance already ends in terminal punctuation.
-      const delay = result.event === "final" && sttProfileRef.current === "flux" ? 0 : /[?.!]\s*$/.test(result.text) ? 120 : 320;
+      if (turn.answered) return;
+
+      const cont = continuationVerdict(turn.text);
+      setTurnView({
+        id: turn.id,
+        segments: turn.segments.length,
+        assembled: turn.text.slice(-160),
+        continuation: cont.incomplete ? `holding — ${cont.reason}` : cont.reason,
+      });
+
+      // Grace window: an unfinished utterance waits for the rest of the sentence
+      // instead of committing a half question. Flux's confirmed EndOfTurn on a
+      // complete sentence still decides immediately.
+      const delay = cont.incomplete
+        ? turn.resumedCount > 0
+          ? 450
+          : 320
+        : result.event === "final" && sttProfileRef.current === "flux"
+          ? 0
+          : /[?.!]\s*$/.test(result.text)
+            ? 120
+            : 320;
+      if (cont.incomplete) turnStats.current.graceHolds += 1;
       if (delay === 0) void decideTurn(turn);
       else
         turn.decideTimer = setTimeout(() => {
@@ -1147,8 +1254,9 @@ export function useCopilotSession(opts: Options) {
           void decideTurn(turn);
         }, delay);
     },
-    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn],
+    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn, newTurn],
   );
+
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
   const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
@@ -1567,6 +1675,14 @@ export function useCopilotSession(opts: Options) {
 
 
       classifierCalls: turnStats.current.classifierCalls,
+      turnId: turnView.id,
+      turnSegments: turnView.segments,
+      turnAssembled: turnView.assembled,
+      segmentsMerged: turnStats.current.merged,
+      turnsResumed: turnStats.current.resumed,
+      graceHolds: turnStats.current.graceHolds,
+      duplicateAnswersBlocked: turnStats.current.duplicateBlocked,
+      lastContinuationReason: turnView.continuation,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
@@ -1608,6 +1724,7 @@ export function useCopilotSession(opts: Options) {
       companionFormat,
       meetingStatus,
       sttProfile,
+      turnView,
     ],
   );
 

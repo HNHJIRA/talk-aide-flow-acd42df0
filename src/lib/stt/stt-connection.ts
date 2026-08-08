@@ -5,7 +5,13 @@ export type SttState = "idle" | "connecting" | "active" | "reconnecting" | "erro
 /** Which Deepgram pipeline is actually carrying this socket right now. */
 export type SttProfile = "flux" | "standard";
 
-export type SttEvent = "interim" | "eager_end_of_turn" | "turn_resumed" | "final";
+export type SttEvent =
+  | "interim"
+  | "start_of_turn"
+  | "eager_end_of_turn"
+  | "turn_resumed"
+  | "final";
+
 
 export type SttResult = {
   text: string;
@@ -218,14 +224,15 @@ export class SttConnection {
 
     const map: Record<string, SttEvent | undefined> = {
       Update: "interim",
-      StartOfTurn: undefined,
+      StartOfTurn: "start_of_turn",
       EagerEndOfTurn: "eager_end_of_turn",
       TurnResumed: "turn_resumed",
       EndOfTurn: "final",
     };
     const mapped = map[evt];
     if (!mapped) return;
-    if (mapped !== "turn_resumed" && !text) return;
+    if (mapped !== "turn_resumed" && mapped !== "start_of_turn" && !text) return;
+
 
     this.opts.onResult({
       text,

@@ -340,8 +340,16 @@ function LiveSession() {
                   ["Detection sources", debug.detectionSources],
                   ["STT profile (interviewer)", debug.sttProfile],
                   ["Turn state", debug.turnStatus],
+                  ["Interviewer turn id", debug.turnId],
+                  ["Segments in current turn", String(debug.turnSegments)],
+                  ["Assembled turn text", debug.turnAssembled || "—"],
+                  ["Continuation guard", debug.lastContinuationReason],
+                  ["Segments merged / turns resumed", `${debug.segmentsMerged} / ${debug.turnsResumed}`],
+                  ["Grace-window holds", String(debug.graceHolds)],
+                  ["Duplicate answers blocked", String(debug.duplicateAnswersBlocked)],
                   ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
                   ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
+
                   ["Companion state", debug.companionState],
 
                   ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
