@@ -609,6 +609,7 @@ export function useCopilotSession(opts: Options) {
       const spec = turn.spec;
       const paint = (snapshot: string) =>
         scheduleFlush(() => {
+          if (stale()) return;
           timer.mark("aiFirstRender");
           setQuestions((prev) =>
             prev.map((q) =>
