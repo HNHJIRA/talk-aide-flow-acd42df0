@@ -300,6 +300,18 @@ export function useCopilotSession(opts: Options) {
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
     decideTimer: ReturnType<typeof setTimeout> | null;
+    /* --- speculative generation (started on eager end-of-turn) --- */
+    spec: {
+      question: string;
+      category: string;
+      controller: AbortController;
+      /** hidden text generated before the turn was confirmed */
+      buffer: string;
+      promoted: boolean;
+      aborted: boolean;
+      /** promote + immediately paint everything generated so far */
+      flush: (() => void) | null;
+    } | null;
   };
 
   const turnRef = useRef<Turn | null>(null);
@@ -313,7 +325,15 @@ export function useCopilotSession(opts: Options) {
   const [aiCall, setAiCall] = useState<LiveCallMeta | null>(null);
 
   const [sttProfile, setSttProfile] = useState("standard — nova-3");
-  const turnStats = useRef({ prepared: 0, cancelled: 0, gateRejected: 0, classifierCalls: 0 });
+  const turnStats = useRef({
+    prepared: 0,
+    cancelled: 0,
+    gateRejected: 0,
+    classifierCalls: 0,
+    specStarted: 0,
+    specReused: 0,
+    specAborted: 0,
+  });
 
   const newTurn = useCallback(() => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -327,10 +347,12 @@ export function useCopilotSession(opts: Options) {
       prefetch: null,
       prefetchTopic: "",
       decideTimer: null,
+      spec: null,
     };
     turnRef.current = turn;
     return turn;
   }, []);
+
 
   const currentTurn = useCallback(() => {
     const turn = turnRef.current;
