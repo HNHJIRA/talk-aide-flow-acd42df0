@@ -80,8 +80,14 @@ export type DebugInfo = {
   micMode: MicMode;
   micRole: string;
   detectionSources: string;
-  /* --- desktop companion / Zoom Desktop --- */
-  companionState: CompanionState;
+  /* --- low-latency pipeline --- */
+  sttProfile: string;
+  turnStatus: TurnStatus;
+  speculativePrepared: number;
+  speculativeCancelled: number;
+  gateRejected: number;
+  classifierCalls: number;
+
   companionVersion: string;
   companionOs: string;
   companionBackend: string;
