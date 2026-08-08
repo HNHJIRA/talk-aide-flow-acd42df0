@@ -157,19 +157,29 @@ export const ms = (value: number | null) => (value == null ? "—" : `${value} m
 export type LiveCallMeta = {
   requestedModel: string;
   actualModel: string | null;
+  provider?: string | null;
   requestedEffort: string;
   actualEffort: string;
   requestedTier: string;
   actualTier: string;
+  fallbackReason?: string | null;
   latencyMode: string;
   maxOutputTokens: number;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   outputTokens: number | null;
+  promptChars?: number;
+  resumeChars?: number;
+  conversationChars?: number;
+  priorQnaChars?: number;
+  jobChars?: number;
+  serverRequestSentMs?: number;
   upstreamHeadersMs: number;
+  upstreamFirstEventMs?: number | null;
   upstreamFirstDeltaMs: number | null;
   upstreamTotalMs: number;
   contextChars: number;
+
   context: "hit" | "miss";
 };
 
