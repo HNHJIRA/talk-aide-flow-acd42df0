@@ -168,8 +168,12 @@ export const EMPTY_WATERFALL: LatencyWaterfall = {
   speculativeReused: false,
   speculativeCancelled: false,
   headStartMs: null,
+  providerHeadStartMs: null,
+  streamOpenMs: null,
+  transportOverheadMs: null,
   bufferedCharsAtConfirm: null,
   visibleAfterConfirmMs: null,
+
 };
 
 
