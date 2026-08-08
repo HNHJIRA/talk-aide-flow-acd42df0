@@ -1331,9 +1331,12 @@ export function useCopilotSession(opts: Options) {
             pending.decideTimer = null;
             turnStats.current.merged += 1;
           }
-          const turn = currentTurn();
+          const turn = activeTurn(result.text);
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
+          turn.lastSpeechAt = performance.now();
+          turn.lastInterim = result.text;
+          setTurnView((prev) => ({ ...prev, stage: "A — listening", revision: turn.revision }));
           if (result.event === "eager_end_of_turn") {
             turn.timer.remark("speechEnd");
             turn.timer.mark("sttStableInterim");
@@ -1341,31 +1344,38 @@ export function useCopilotSession(opts: Options) {
             schedulePrefetch(turn, result.text);
             const assembled = `${turn.segments.join(" ")} ${result.text}`.trim();
             const cont = continuationVerdict(assembled);
-            // Speculative head start: run the real answer request now, invisibly —
-            // but never on an obviously unfinished sentence.
+            // Even if the final never arrives (interviewer just stops), the turn
+            // is committed by the silence deadline.
+            armHardCommit(turn);
+            // Speculative head start: run the real answer request now, invisibly.
             if (
               optsRef.current.autoGenerate &&
               !turn.spec &&
-              !cont.incomplete &&
               !turn.answered &&
               turn.status !== "generating" &&
               turn.status !== "confirmed"
             ) {
-              const verdict = fastQuestionGate(assembled);
-              if (
-                verdict.decision === "question" &&
-                verdict.confidence >= optsRef.current.confidenceThreshold
-              ) {
-                turn.timer.mark("speculativeStart");
-                void streamLiveAnswer(turn, verdict.question, verdict.category, {
-                  speculative: true,
-                });
+              if (cont.incomplete) {
+                // Stage B: unfinished phrasing still gets a warm answer started.
+                scheduleSpeculation(turn, TURN_SHORT_GRACE_MS);
+              } else {
+                const verdict = fastQuestionGate(assembled);
+                if (
+                  verdict.decision === "question" &&
+                  verdict.confidence >= optsRef.current.confidenceThreshold
+                ) {
+                  turn.timer.mark("speculativeStart");
+                  void streamLiveAnswer(turn, verdict.question, verdict.category, {
+                    speculative: true,
+                  });
+                }
               }
             }
             return;
           }
           schedulePrefetch(turn, result.text);
         }
+
         return;
       }
 
