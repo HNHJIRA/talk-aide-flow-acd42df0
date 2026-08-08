@@ -111,6 +111,16 @@ export type DebugInfo = {
   graceHolds: number;
   duplicateAnswersBlocked: number;
   lastContinuationReason: string;
+  /* --- bounded silence / revision --- */
+  turnRevision: number;
+  turnSilenceMs: number;
+  turnStage: string;
+  hardCommits: number;
+  lateWindowState: string;
+  lateContinuations: number;
+  turnsReopened: number;
+  answersSuperseded: number;
+
 
 
   /* --- desktop companion / Zoom Desktop --- */
@@ -129,6 +139,18 @@ export type DebugInfo = {
   errors: string[];
 };
 
+/* ---------------- interviewer turn timing (bounded silence) ----------------
+ * Stage A  0 → 350 ms      short natural pause: keep the turn open, decide a
+ *                          complete-looking sentence immediately.
+ * Stage B  350 → 700 ms    likely continuation: still open, but speculative
+ *                          generation starts so the answer is warm.
+ * Stage C  ≥ 1000 ms       hard commit: answer even if the text looks unfinished.
+ * Late continuation window after commit: reopen and revise the SAME turn.
+ */
+const TURN_SHORT_GRACE_MS = 350;
+const TURN_INCOMPLETE_GRACE_MS = 700;
+const TURN_HARD_COMMIT_MS = 1000;
+const LATE_CONTINUATION_MS = 1800;
 
 
 const normalize = (text: string) =>
@@ -320,14 +342,30 @@ export function useCopilotSession(opts: Options) {
     resumedCount: number;
     /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
     turnIndex: number | null;
-    /** One turn id produces at most one automatic answer. */
+    /** One turn id + revision produces at most one automatic answer. */
     answered: boolean;
     segmentId: string | null;
+    /** Bumped when a late continuation reopens an already-committed turn. */
+    revision: number;
+    /** performance.now() of the last time we heard voice on this turn. */
+    lastSpeechAt: number;
+    /** Last interim text, used when the hard deadline fires before any final. */
+    lastInterim: string;
+    /** performance.now() when this turn produced an answer. */
+    committedAt: number | null;
+    /** Committed by the silence deadline rather than by a complete sentence. */
+    hardCommitted: boolean;
+    /** In-flight confirmed answer request, aborted when the turn is revised. */
+    answerController: AbortController | null;
 
     contextKey: string | null;
     prefetch: Promise<string | null> | null;
     prefetchTopic: string;
     decideTimer: ReturnType<typeof setTimeout> | null;
+    /** Stage C: fires even when the utterance still looks unfinished. */
+    hardTimer: ReturnType<typeof setTimeout> | null;
+    /** Stage B: start speculation while still waiting for more speech. */
+    specTimer: ReturnType<typeof setTimeout> | null;
     /* --- speculative generation (started on eager end-of-turn) --- */
     spec: {
       question: string;
@@ -365,15 +403,22 @@ export function useCopilotSession(opts: Options) {
     resumed: 0,
     graceHolds: 0,
     duplicateBlocked: 0,
+    hardCommits: 0,
+    lateContinuations: 0,
+    reopened: 0,
+    superseded: 0,
   });
-  /** Turn ids that already produced an automatic answer. */
-  const answeredTurns = useRef<Set<string>>(new Set());
+  /** Turn id -> highest revision that already produced an automatic answer. */
+  const answeredTurns = useRef<Map<string, number>>(new Map());
   const [turnView, setTurnView] = useState({
     id: "—",
     segments: 0,
     assembled: "",
     continuation: "—",
+    revision: 0,
+    stage: "idle",
   });
+  const [turnSilenceMs, setTurnSilenceMs] = useState(0);
 
   const newTurn = useCallback(() => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -387,15 +432,33 @@ export function useCopilotSession(opts: Options) {
       turnIndex: null,
       answered: false,
       segmentId: null,
+      revision: 0,
+      lastSpeechAt: performance.now(),
+      lastInterim: "",
+      committedAt: null,
+      hardCommitted: false,
+      answerController: null,
       contextKey: null,
       prefetch: null,
       prefetchTopic: "",
       decideTimer: null,
+      hardTimer: null,
+      specTimer: null,
       spec: null,
     };
     turnRef.current = turn;
     return turn;
   }, []);
+
+  const clearTurnTimers = useCallback((turn: Turn) => {
+    if (turn.decideTimer) clearTimeout(turn.decideTimer);
+    if (turn.hardTimer) clearTimeout(turn.hardTimer);
+    if (turn.specTimer) clearTimeout(turn.specTimer);
+    turn.decideTimer = null;
+    turn.hardTimer = null;
+    turn.specTimer = null;
+  }, []);
+
 
 
 
@@ -475,6 +538,10 @@ export function useCopilotSession(opts: Options) {
     ) => {
       const speculative = opts.speculative === true;
       const controller = new AbortController();
+      // Anything produced for an older revision of this turn is stale the moment
+      // a late continuation revises the question.
+      const rev = turn.revision;
+      const stale = () => turn.revision !== rev;
       if (speculative) {
         turn.spec = {
           question: questionText,
@@ -490,6 +557,7 @@ export function useCopilotSession(opts: Options) {
       } else {
         abortRef.current?.abort();
         abortRef.current = controller;
+        turn.answerController = controller;
       }
       const timer = turn.timer;
       turn.status = "generating";
@@ -541,6 +609,7 @@ export function useCopilotSession(opts: Options) {
       const spec = turn.spec;
       const paint = (snapshot: string) =>
         scheduleFlush(() => {
+          if (stale()) return;
           timer.mark("aiFirstRender");
           setQuestions((prev) =>
             prev.map((q) =>
@@ -682,6 +751,8 @@ export function useCopilotSession(opts: Options) {
         }
 
         timer.mark("aiComplete");
+        // A newer revision of this turn owns the row now: discard this answer.
+        if (stale()) return;
         turn.status = "completed";
         setQuestions((prev) =>
           prev.map((q) => (q.id === turn.id ? { ...q, answer, status: "answered" } : q)),
@@ -891,36 +962,55 @@ export function useCopilotSession(opts: Options) {
   /** Confirmed question -> UI row + streaming answer. Database writes trail behind. */
   const commitQuestion = useCallback(
     (turn: Turn, question: string, category: string, confidence: number) => {
-      // One logical interviewer turn -> at most one automatic answer, no matter
-      // how many STT segments or speculative restarts it went through.
-      if (turn.answered || answeredTurns.current.has(turn.id)) {
+      // One logical interviewer turn + revision -> at most one automatic answer,
+      // no matter how many STT segments or speculative restarts it went through.
+      if (turn.answered || answeredTurns.current.get(turn.id) === turn.revision) {
         turnStats.current.duplicateBlocked += 1;
         return;
       }
+      clearTurnTimers(turn);
       turn.answered = true;
-      answeredTurns.current.add(turn.id);
+      turn.committedAt = performance.now();
+      answeredTurns.current.set(turn.id, turn.revision);
       lastConfidence.current = confidence;
       patchDiag({ lastQuestion: question, lastConfidence: confidence });
       turn.status = "confirmed";
+      const revised = turn.revision > 0;
 
+      setQuestions((prev) =>
+        revised
+          ? prev.map((q) =>
+              q.id === turn.id
+                ? { ...q, text: question, category, confidence, answer: "", status: "generating" }
+                : q,
+            )
+          : [
+              {
+                id: turn.id,
+                dbId: null,
+                text: question,
+                category,
+                confidence,
+                status: "generating",
+                answer: "",
+                answerId: null,
+                firstTokenMs: null,
+                pinned: false,
+              },
+              ...prev,
+            ],
+      );
 
-      setQuestions((prev) => [
-        {
-          id: turn.id,
-          dbId: null,
-          text: question,
-          category,
-          confidence,
-          status: "generating",
-          answer: "",
-          answerId: null,
-          firstTokenMs: null,
-          pinned: false,
-        },
-        ...prev,
-      ]);
-
-      void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
+      if (revised) {
+        // Same logical question, revised text: update the existing row instead of
+        // creating a second one.
+        void (async () => {
+          const dbId = await questionRowIds.current.get(turn.id);
+          if (dbId) await supabase.from("detected_questions").update({ question_text: question }).eq("id", dbId);
+        })();
+      } else {
+        void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
+      }
 
       if (!optsRef.current.autoGenerate) {
         turn.spec?.controller.abort();
@@ -947,8 +1037,47 @@ export function useCopilotSession(opts: Options) {
       }
       void streamLiveAnswer(turn, question, category);
     },
-    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall],
+    [patchDiag, persistQuestion, streamLiveAnswer, publishWaterfall, clearTurnTimers],
   );
+
+  /**
+   * Late continuation: the interviewer resumed shortly after we already committed
+   * (usually after a hard-commit on a pause). Reopen the SAME logical turn, throw
+   * away the answer in flight and let the next decision supersede it.
+   */
+  const reopenTurn = useCallback(
+    (turn: Turn) => {
+      clearTurnTimers(turn);
+      turn.revision += 1;
+      turn.answered = false;
+      turn.hardCommitted = false;
+      turn.committedAt = null;
+      turn.status = "listening";
+      turnStats.current.reopened += 1;
+      turnStats.current.lateContinuations += 1;
+      if (turn.answerController) {
+        turnStats.current.superseded += 1;
+        turn.answerController.abort();
+        turn.answerController = null;
+      }
+      if (turn.spec) {
+        turn.spec.aborted = true;
+        turn.spec.controller.abort();
+        turn.spec = null;
+      }
+      setQuestions((prev) =>
+        prev.map((q) => (q.id === turn.id ? { ...q, answer: "", status: "generating" } : q)),
+      );
+      setTurnView((prev) => ({
+        ...prev,
+        revision: turn.revision,
+        stage: "late continuation",
+        continuation: `late continuation — revising turn (r${turn.revision})`,
+      }));
+    },
+    [clearTurnTimers],
+  );
+
 
 
   /**
@@ -956,12 +1085,17 @@ export function useCopilotSession(opts: Options) {
    * only ambiguous utterances pay for the AI classifier round trip.
    */
   const decideTurn = useCallback(
-    async (turn: Turn) => {
-      const text = turn.text.trim();
+    async (turn: Turn, opts: { hard?: boolean } = {}) => {
+      clearTurnTimers(turn);
+      // The hard deadline can fire before any final arrived: fall back to the
+      // last interim rather than losing the question entirely.
+      const text = (turn.text.trim() || (opts.hard ? turn.lastInterim.trim() : "")).trim();
       if (!text || text.length < 6) {
         turn.status = "completed";
         return;
       }
+      turn.hardCommitted = opts.hard === true;
+
 
       turn.timer.mark("gateStart");
       const verdict = fastQuestionGate(text);
@@ -1027,7 +1161,7 @@ export function useCopilotSession(opts: Options) {
       commitQuestion(turn, result.question, result.category, result.confidence);
       publishWaterfall(turn.timer);
     },
-    [commitQuestion, isDuplicate, patchDiag, pushError, publishWaterfall],
+    [commitQuestion, isDuplicate, patchDiag, pushError, publishWaterfall, clearTurnTimers],
   );
 
   /**
@@ -1051,7 +1185,82 @@ export function useCopilotSession(opts: Options) {
     [newTurn, isDuplicate, commitQuestion],
   );
 
-  /* ---------------- STT wiring ---------------- */
+  /* ---------------- bounded silence helpers ---------------- */
+
+  /**
+   * Stage C. Anchored to the last moment we actually heard voice, so a pause in
+   * the middle of a sentence can never hold the turn open indefinitely.
+   */
+  const armHardCommit = useCallback(
+    (turn: Turn) => {
+      if (turn.hardTimer) clearTimeout(turn.hardTimer);
+      turn.hardTimer = null;
+      if (turn.answered) return;
+      const delay = Math.max(120, TURN_HARD_COMMIT_MS - (performance.now() - turn.lastSpeechAt));
+      turn.hardTimer = setTimeout(() => {
+        turn.hardTimer = null;
+        if (turn.answered) return;
+        turnStats.current.hardCommits += 1;
+        setTurnView((prev) => ({
+          ...prev,
+          stage: "C — hard commit",
+          continuation: "hard commit — silence deadline reached",
+        }));
+        void decideTurn(turn, { hard: true });
+      }, delay);
+    },
+    [decideTurn],
+  );
+
+  /** Stage B: warm the answer while the turn is still (possibly) continuing. */
+  const scheduleSpeculation = useCallback(
+    (turn: Turn, delay: number) => {
+      if (turn.specTimer) clearTimeout(turn.specTimer);
+      turn.specTimer = setTimeout(() => {
+        turn.specTimer = null;
+        if (turn.answered || turn.spec || !optsRef.current.autoGenerate) return;
+        const text = (turn.text || turn.lastInterim).trim();
+        if (!text) return;
+        const verdict = fastQuestionGate(text);
+        if (
+          verdict.decision !== "question" ||
+          verdict.confidence < optsRef.current.confidenceThreshold
+        )
+          return;
+        setTurnView((prev) => ({ ...prev, stage: "B — likely continuation (speculating)" }));
+        turn.timer.mark("speculativeStart");
+        void streamLiveAnswer(turn, verdict.question, verdict.category, { speculative: true });
+      }, delay);
+    },
+    [streamLiveAnswer],
+  );
+
+  /**
+   * New interviewer speech arriving right after a commit. A fragment that reads
+   * like the rest of the same sentence revises the committed turn; anything that
+   * reads like a fresh question starts a new one.
+   */
+  const activeTurn = useCallback(
+    (text: string) => {
+      const prev = turnRef.current;
+      if (!prev || !prev.answered) return currentTurn();
+      const withinWindow =
+        prev.committedAt != null && performance.now() - prev.committedAt <= LATE_CONTINUATION_MS;
+      const norm = normalize(text);
+      const gate = fastQuestionGate(text);
+      const looksLikeNewQuestion =
+        gate.decision === "question" &&
+        !/^(and|so|but|or|because|which|that|to|with|for|about|like)\b/.test(norm);
+      if (withinWindow && prev.hardCommitted && !looksLikeNewQuestion && norm) {
+        reopenTurn(prev);
+        return prev;
+      }
+      return newTurn();
+    },
+    [currentTurn, newTurn, reopenTurn],
+  );
+
+
 
   const handleResult = useCallback(
     (
@@ -1107,8 +1316,18 @@ export function useCopilotSession(opts: Options) {
               turn.spec = null;
               turn.timer.speculativeCancelled = true;
             }
-            if (!turn.answered) turn.status = "listening";
-            setTurnView((prev) => ({ ...prev, continuation: "turn resumed — still listening" }));
+            if (!turn.answered) {
+              turn.status = "listening";
+              // Speech resumed: the silence deadline restarts from now, it is
+              // never removed.
+              turn.lastSpeechAt = performance.now();
+              armHardCommit(turn);
+            }
+            setTurnView((prev) => ({
+              ...prev,
+              stage: "A — turn resumed",
+              continuation: "turn resumed — still listening",
+            }));
           }
           return;
         }
@@ -1122,9 +1341,12 @@ export function useCopilotSession(opts: Options) {
             pending.decideTimer = null;
             turnStats.current.merged += 1;
           }
-          const turn = currentTurn();
+          const turn = activeTurn(result.text);
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
+          turn.lastSpeechAt = performance.now();
+          turn.lastInterim = result.text;
+          setTurnView((prev) => ({ ...prev, stage: "A — listening", revision: turn.revision }));
           if (result.event === "eager_end_of_turn") {
             turn.timer.remark("speechEnd");
             turn.timer.mark("sttStableInterim");
@@ -1132,31 +1354,38 @@ export function useCopilotSession(opts: Options) {
             schedulePrefetch(turn, result.text);
             const assembled = `${turn.segments.join(" ")} ${result.text}`.trim();
             const cont = continuationVerdict(assembled);
-            // Speculative head start: run the real answer request now, invisibly —
-            // but never on an obviously unfinished sentence.
+            // Even if the final never arrives (interviewer just stops), the turn
+            // is committed by the silence deadline.
+            armHardCommit(turn);
+            // Speculative head start: run the real answer request now, invisibly.
             if (
               optsRef.current.autoGenerate &&
               !turn.spec &&
-              !cont.incomplete &&
               !turn.answered &&
               turn.status !== "generating" &&
               turn.status !== "confirmed"
             ) {
-              const verdict = fastQuestionGate(assembled);
-              if (
-                verdict.decision === "question" &&
-                verdict.confidence >= optsRef.current.confidenceThreshold
-              ) {
-                turn.timer.mark("speculativeStart");
-                void streamLiveAnswer(turn, verdict.question, verdict.category, {
-                  speculative: true,
-                });
+              if (cont.incomplete) {
+                // Stage B: unfinished phrasing still gets a warm answer started.
+                scheduleSpeculation(turn, TURN_SHORT_GRACE_MS);
+              } else {
+                const verdict = fastQuestionGate(assembled);
+                if (
+                  verdict.decision === "question" &&
+                  verdict.confidence >= optsRef.current.confidenceThreshold
+                ) {
+                  turn.timer.mark("speculativeStart");
+                  void streamLiveAnswer(turn, verdict.question, verdict.category, {
+                    speculative: true,
+                  });
+                }
               }
             }
             return;
           }
           schedulePrefetch(turn, result.text);
         }
+
         return;
       }
 
@@ -1211,14 +1440,16 @@ export function useCopilotSession(opts: Options) {
 
       if (!drivesDetection) return;
 
-      const turn = currentTurn();
+      const turn = activeTurn(result.text);
       if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
       turn.timer.mark("speechEnd", lastRemoteVoiceAt.current ?? performance.now());
       turn.timer.remark("sttFinal");
+      turn.lastSpeechAt = performance.now();
       // A "final" is one SEGMENT of a logical turn, never the turn itself: keep
-      // assembling until the sentence looks finished.
+      // assembling until the sentence looks finished — but never past the
+      // Stage C silence deadline.
       turn.segments.push(result.text.trim());
       if (turn.segments.length > 1) turnStats.current.merged += 1;
       turn.text = turn.segments.join(" ").trim().slice(-600);
@@ -1232,21 +1463,27 @@ export function useCopilotSession(opts: Options) {
         segments: turn.segments.length,
         assembled: turn.text.slice(-160),
         continuation: cont.incomplete ? `holding — ${cont.reason}` : cont.reason,
+        revision: turn.revision,
+        stage: cont.incomplete ? "B — likely continuation" : "A — short pause",
       });
 
-      // Grace window: an unfinished utterance waits for the rest of the sentence
-      // instead of committing a half question. Flux's confirmed EndOfTurn on a
-      // complete sentence still decides immediately.
+      // Stage A/B grace window: an unfinished utterance waits for the rest of the
+      // sentence instead of committing a half question. Flux's confirmed EndOfTurn
+      // on a complete sentence still decides immediately.
       const delay = cont.incomplete
-        ? turn.resumedCount > 0
-          ? 450
-          : 320
+        ? TURN_INCOMPLETE_GRACE_MS
         : result.event === "final" && sttProfileRef.current === "flux"
           ? 0
           : /[?.!]\s*$/.test(result.text)
             ? 120
-            : 320;
-      if (cont.incomplete) turnStats.current.graceHolds += 1;
+            : TURN_SHORT_GRACE_MS;
+      if (cont.incomplete) {
+        turnStats.current.graceHolds += 1;
+        // Warm the answer during Stage B so the hard commit is not a cold start.
+        scheduleSpeculation(turn, TURN_SHORT_GRACE_MS);
+      }
+      // Stage C backstop: bounded silence, always commits.
+      armHardCommit(turn);
       if (delay === 0) void decideTurn(turn);
       else
         turn.decideTimer = setTimeout(() => {
@@ -1254,8 +1491,20 @@ export function useCopilotSession(opts: Options) {
           void decideTurn(turn);
         }, delay);
     },
-    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn, newTurn],
+    [
+      persistSegment,
+      patchDiag,
+      currentTurn,
+      newTurn,
+      activeTurn,
+      schedulePrefetch,
+      decideTurn,
+      armHardCommit,
+      scheduleSpeculation,
+      streamLiveAnswer,
+    ],
   );
+
 
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
@@ -1508,7 +1757,7 @@ export function useCopilotSession(opts: Options) {
     abortRef.current?.abort();
     if (detectTimer.current) clearTimeout(detectTimer.current);
     if (prefetchDebounce.current) clearTimeout(prefetchDebounce.current);
-    if (turnRef.current?.decideTimer) clearTimeout(turnRef.current.decideTimer);
+    if (turnRef.current) clearTurnTimers(turnRef.current);
     turnRef.current = null;
     micStt.current?.stop();
 
@@ -1529,7 +1778,7 @@ export function useCopilotSession(opts: Options) {
     meetingStream.current = null;
     setMicStatus("disconnected");
     setMeetingStatus("disconnected");
-  }, []);
+  }, [clearTurnTimers]);
 
 
   const endSession = useCallback(async () => {
@@ -1606,6 +1855,8 @@ export function useCopilotSession(opts: Options) {
     const id = setInterval(() => {
       setMicLevel(micPcm.current?.getLevel() ?? 0);
       setMeetingLevel(meetingPcm.current?.getLevel() ?? 0);
+      const turn = turnRef.current;
+      setTurnSilenceMs(turn ? Math.round(performance.now() - turn.lastSpeechAt) : 0);
     }, 120);
     return () => clearInterval(id);
   }, []);
@@ -1683,6 +1934,18 @@ export function useCopilotSession(opts: Options) {
       graceHolds: turnStats.current.graceHolds,
       duplicateAnswersBlocked: turnStats.current.duplicateBlocked,
       lastContinuationReason: turnView.continuation,
+      turnRevision: turnView.revision,
+      turnSilenceMs,
+      turnStage: turnView.stage,
+      hardCommits: turnStats.current.hardCommits,
+      lateWindowState:
+        turnRef.current?.committedAt != null &&
+        performance.now() - turnRef.current.committedAt <= LATE_CONTINUATION_MS
+          ? `open (${LATE_CONTINUATION_MS} ms)`
+          : "closed",
+      lateContinuations: turnStats.current.lateContinuations,
+      turnsReopened: turnStats.current.reopened,
+      answersSuperseded: turnStats.current.superseded,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
@@ -1725,6 +1988,7 @@ export function useCopilotSession(opts: Options) {
       meetingStatus,
       sttProfile,
       turnView,
+      turnSilenceMs,
     ],
   );
 
