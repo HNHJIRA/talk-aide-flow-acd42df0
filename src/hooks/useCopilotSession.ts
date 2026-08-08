@@ -1435,6 +1435,8 @@ export function useCopilotSession(opts: Options) {
     debug,
     latency,
     latencyHistory,
+    aiCall,
+
     companionHealth,
     companionState,
     connectMicrophone,
