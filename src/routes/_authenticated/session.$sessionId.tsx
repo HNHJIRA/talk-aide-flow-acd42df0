@@ -108,6 +108,8 @@ function LiveSession() {
     debug,
     latency,
     latencyHistory,
+    aiCall,
+
     companionHealth,
     companionState,
     connectMicrophone,
