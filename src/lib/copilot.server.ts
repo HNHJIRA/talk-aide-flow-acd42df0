@@ -184,3 +184,222 @@ export async function retrieveContext(
     .join("\n---\n")
     .slice(0, 6000);
 }
+
+/* ============================================================
+ * LIVE ANSWER PATH (latency-optimised)
+ * Everything below serves the automatic in-interview answer only.
+ * Practice evaluations, notes and manual regeneration keep using
+ * ANSWER_MODEL through /api/answer-stream unchanged.
+ * ============================================================ */
+
+/** Fast model for the automatic live answer. Overridable without a redeploy. */
+export const LIVE_ANSWER_MODEL = process.env["LIVE_ANSWER_MODEL"] ?? "google/gemini-3.6-flash";
+/** "none" removes model thinking latency — measured 1979ms -> 817ms TTFT. */
+export const LIVE_REASONING_EFFORT = process.env["LIVE_REASONING_EFFORT"] ?? "none";
+export const LIVE_SERVICE_TIER = process.env["LIVE_SERVICE_TIER"] ?? "";
+export const LIVE_MAX_OUTPUT = Number(process.env["LIVE_MAX_OUTPUT"] ?? 320);
+
+type CacheEntry<T> = { at: number; value: T };
+const TTL_MS = 10 * 60 * 1000;
+
+function cacheGet<T>(map: Map<string, CacheEntry<T>>, key: string): T | null {
+  const hit = map.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > TTL_MS) {
+    map.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function cacheSet<T>(map: Map<string, CacheEntry<T>>, key: string, value: T) {
+  if (map.size > 200) {
+    for (const [k, v] of map) if (Date.now() - v.at > TTL_MS) map.delete(k);
+  }
+  map.set(key, { at: Date.now(), value });
+}
+
+export type LiveSessionContext = {
+  sessionId: string;
+  userId: string;
+  targetRole: string | null;
+  companyName: string | null;
+  jobDescription: string | null;
+  resumeDocumentId: string | null;
+  answerStyle: string;
+  answerLength: string;
+  answerLanguage: string;
+  rollingSummary: string | null;
+  profileLine: string;
+};
+
+type Chunk = { content: string; chunk_type: string; document_id: string };
+
+const sessionCtxCache = new Map<string, CacheEntry<LiveSessionContext>>();
+const chunkCache = new Map<string, CacheEntry<Chunk[]>>();
+const prefetchCache = new Map<string, CacheEntry<string>>();
+
+/** Session-level immutable context, loaded once per session (primed at Go Live). */
+export async function getLiveSessionContext(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+  sessionId: string,
+  refresh = false,
+): Promise<LiveSessionContext | null> {
+  const key = `${userId}:${sessionId}`;
+  if (!refresh) {
+    const cached = cacheGet(sessionCtxCache, key);
+    if (cached) return cached;
+  }
+
+  const [{ data: session }, { data: profile }] = await Promise.all([
+    db
+      .from("interview_sessions")
+      .select(
+        "id, user_id, target_role, company_name, job_description, resume_document_id, answer_style, answer_length, answer_language, rolling_summary",
+      )
+      .eq("id", sessionId)
+      .maybeSingle(),
+    db
+      .from("profiles")
+      .select("full_name, current_position, target_role, experience_level")
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
+
+  if (!session || session.user_id !== userId) return null;
+
+  const ctx: LiveSessionContext = {
+    sessionId: session.id,
+    userId,
+    targetRole: session.target_role,
+    companyName: session.company_name,
+    jobDescription: (session.job_description ?? "").slice(0, 2000) || null,
+    resumeDocumentId: session.resume_document_id,
+    answerStyle: session.answer_style ?? "natural",
+    answerLength: session.answer_length ?? "short",
+    answerLanguage: session.answer_language ?? "en",
+    rollingSummary: session.rolling_summary,
+    profileLine: `Name: ${profile?.full_name ?? "unknown"} | Current: ${profile?.current_position ?? "unknown"} | Target: ${session.target_role ?? profile?.target_role ?? "unknown"} | Level: ${profile?.experience_level ?? "unknown"}`,
+  };
+  cacheSet(sessionCtxCache, key, ctx);
+  return ctx;
+}
+
+/** Already-indexed chunks only — no parsing/chunking/embedding ever happens here. */
+async function getUserChunks(db: ReturnType<typeof serviceClient>, userId: string): Promise<Chunk[]> {
+  const cached = cacheGet(chunkCache, userId);
+  if (cached) return cached;
+  const { data } = await db
+    .from("document_chunks")
+    .select("content, chunk_type, document_id")
+    .eq("user_id", userId)
+    .limit(300);
+  const chunks = (data ?? []) as Chunk[];
+  cacheSet(chunkCache, userId, chunks);
+  return chunks;
+}
+
+/** Top-k keyword retrieval over the cached chunk set. */
+export async function retrieveLiveContext(
+  db: ReturnType<typeof serviceClient>,
+  userId: string,
+  documentId: string | null,
+  question: string,
+  k = 4,
+): Promise<string> {
+  const terms = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 10);
+
+  const chunks = await getUserChunks(db, userId);
+  if (!chunks.length) return "";
+
+  const scored = chunks
+    .map((chunk) => {
+      const text = chunk.content.toLowerCase();
+      let score = terms.reduce((acc, term) => acc + (text.includes(term) ? 1 : 0), 0);
+      if (documentId && chunk.document_id === documentId) score += 1.5;
+      if (["summary", "skills", "experience"].includes(chunk.chunk_type)) score += 0.5;
+      return { chunk, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .filter((item) => item.score > 0);
+
+  const selected = scored.length ? scored : chunks.slice(0, Math.min(3, k)).map((chunk) => ({ chunk, score: 0 }));
+  return selected
+    .map((item) => `[${item.chunk.chunk_type}] ${item.chunk.content}`)
+    .join("\n---\n")
+    .slice(0, 3500);
+}
+
+export function storePrefetchedContext(key: string, context: string) {
+  cacheSet(prefetchCache, key, context);
+}
+
+export function readPrefetchedContext(key: string | null | undefined): string | null {
+  if (!key) return null;
+  return cacheGet(prefetchCache, key);
+}
+
+/**
+ * Stable prompt prefix (identical bytes across every request in a session) so
+ * nothing forces the provider to re-read a freshly-built instruction block.
+ */
+export function liveSystemPrompt(ctx: LiveSessionContext, style: string, length: string) {
+  return `${NO_FABRICATION_RULES}
+
+${answerInstructions(style, length, ctx.answerLanguage)}
+This is a LIVE interview: the candidate must be able to start speaking your first sentence immediately. Lead with the answer, no preamble.
+
+CANDIDATE PROFILE:
+${ctx.profileLine}
+TARGET: ${ctx.targetRole ?? "unspecified"} at ${ctx.companyName ?? "unspecified company"}
+
+JOB DESCRIPTION:
+${ctx.jobDescription ?? "(none provided)"}`;
+}
+
+export function liveUserPrompt(args: {
+  question: string;
+  category: string;
+  context: string;
+  recentConversation: string;
+  priorQna: string;
+  rollingSummary: string | null;
+}) {
+  return `VERIFIED RESUME / DOCUMENT EXCERPTS (only source of personal facts):
+${args.context || "(no resume content available — do not invent any personal history)"}
+
+SESSION SUMMARY SO FAR:
+${args.rollingSummary ?? "(none)"}
+
+RECENT CONVERSATION:
+${args.recentConversation || "(none)"}
+
+EARLIER QUESTIONS AND SUGGESTIONS:
+${args.priorQna || "(none)"}
+
+INTERVIEW QUESTION (category: ${args.category}):
+${args.question}
+
+Write what the candidate should say now.`;
+}
+
+/** Body for the live streaming call, including optional speed knobs. */
+export function liveAnswerBody(messages: { role: string; content: string }[]) {
+  const body: Record<string, unknown> = {
+    model: LIVE_ANSWER_MODEL,
+    stream: true,
+    temperature: 0.4,
+    max_tokens: LIVE_MAX_OUTPUT,
+    messages,
+  };
+  if (LIVE_REASONING_EFFORT) body["reasoning_effort"] = LIVE_REASONING_EFFORT;
+  if (LIVE_SERVICE_TIER) body["service_tier"] = LIVE_SERVICE_TIER;
+  return body;
+}
