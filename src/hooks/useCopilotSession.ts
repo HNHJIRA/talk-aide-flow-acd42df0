@@ -492,7 +492,6 @@ export function useCopilotSession(opts: Options) {
       let firstToken: number | null = null;
 
       const spec = turn.spec;
-      const hidden = () => speculative && spec != null && !spec.promoted;
       const paint = (snapshot: string) =>
         scheduleFlush(() => {
           timer.mark("aiFirstRender");
@@ -664,7 +663,6 @@ export function useCopilotSession(opts: Options) {
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
         setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
       }
-      void hidden;
     },
 
     [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
