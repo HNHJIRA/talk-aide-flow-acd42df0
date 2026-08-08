@@ -22,10 +22,13 @@ function Row({ label, value, hint }: { label: string; value: string; hint?: stri
 export function LatencyWaterfallPanel({
   latency,
   history,
+  aiCall,
 }: {
   latency: LatencyWaterfall;
   history: LatencyWaterfall[];
+  aiCall?: LiveCallMeta | null;
 }) {
+
   const total = latency.totalMs;
   const grade =
     total == null
