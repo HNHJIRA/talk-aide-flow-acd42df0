@@ -77,6 +77,16 @@ export function LatencyWaterfallPanel({
         />
         <Row label="Final → AI request sent" value={ms(latency.aiRequestMs)} />
         <Row label="AI time to first token" value={ms(latency.aiTtftMs)} />
+        <Row
+          label="Request → stream open"
+          value={ms(latency.streamOpenMs)}
+          hint="Client → server → first SSE byte (transport floor, no AI involved)"
+        />
+        <Row
+          label="Transport overhead"
+          value={ms(latency.transportOverheadMs)}
+          hint="Server forwarded first upstream byte → browser parsed first token"
+        />
         <Row label="Network overhead" value={ms(latency.serverToBrowserMs)} />
         <Row label="Token → painted" value={ms(latency.browserRenderMs)} />
         <Row label="Speech end → first token on screen" value={ms(latency.totalMs)} />
@@ -93,7 +103,13 @@ export function LatencyWaterfallPanel({
                   : "started"
           }
         />
-        <Row label="AI head start before final" value={ms(latency.headStartMs)} />
+        <Row label="AI head start (client)" value={ms(latency.headStartMs)} />
+        <Row
+          label="AI head start (provider)"
+          value={ms(latency.providerHeadStartMs)}
+          hint="Time the gateway was already generating before the confirmed end of turn"
+        />
+
         <Row
           label="Hidden text at confirm"
           value={
