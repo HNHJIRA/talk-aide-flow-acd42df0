@@ -18,6 +18,7 @@ import { Route as AuthenticatedDocumentsRouteImport } from './routes/_authentica
 import { Route as AuthenticatedNewSessionRouteImport } from './routes/_authenticated/new-session'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as ApiAnswerStreamRouteImport } from './routes/api/answer-stream'
+import { Route as ApiLiveAnswerRouteImport } from './routes/api/live-answer'
 import { Route as AuthenticatedAdminDesktopReleasesRouteImport } from './routes/_authenticated/admin/desktop-releases'
 import { Route as AuthenticatedHistoryIndexRouteImport } from './routes/_authenticated/history.index'
 import { Route as AuthenticatedHistorySessionIdRouteImport } from './routes/_authenticated/history.$sessionId'
@@ -69,6 +70,11 @@ const ApiAnswerStreamRoute = ApiAnswerStreamRouteImport.update({
   path: '/api/answer-stream',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiLiveAnswerRoute = ApiLiveAnswerRouteImport.update({
+  id: '/api/live-answer',
+  path: '/api/live-answer',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedAdminDesktopReleasesRoute =
   AuthenticatedAdminDesktopReleasesRouteImport.update({
     id: '/admin/desktop-releases',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/new-session': typeof AuthenticatedNewSessionRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/api/live-answer': typeof ApiLiveAnswerRoute
   '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/new-session': typeof AuthenticatedNewSessionRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/api/live-answer': typeof ApiLiveAnswerRoute
   '/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/_authenticated/new-session': typeof AuthenticatedNewSessionRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/answer-stream': typeof ApiAnswerStreamRoute
+  '/api/live-answer': typeof ApiLiveAnswerRoute
   '/_authenticated/admin/desktop-releases': typeof AuthenticatedAdminDesktopReleasesRoute
   '/_authenticated/history/$sessionId': typeof AuthenticatedHistorySessionIdRoute
   '/_authenticated/session/$sessionId': typeof AuthenticatedSessionSessionIdRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/new-session'
     | '/settings'
     | '/api/answer-stream'
+    | '/api/live-answer'
     | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
@@ -181,6 +191,7 @@ export interface FileRouteTypes {
     | '/new-session'
     | '/settings'
     | '/api/answer-stream'
+    | '/api/live-answer'
     | '/admin/desktop-releases'
     | '/history/$sessionId'
     | '/session/$sessionId'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '/_authenticated/new-session'
     | '/_authenticated/settings'
     | '/api/answer-stream'
+    | '/api/live-answer'
     | '/_authenticated/admin/desktop-releases'
     | '/_authenticated/history/$sessionId'
     | '/_authenticated/session/$sessionId'
@@ -212,6 +224,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   DownloadRoute: typeof DownloadRoute
   ApiAnswerStreamRoute: typeof ApiAnswerStreamRoute
+  ApiLiveAnswerRoute: typeof ApiLiveAnswerRoute
   ApiPublicDesktopReleaseRoute: typeof ApiPublicDesktopReleaseRoute
   ApiPublicCompanionPairRoute: typeof ApiPublicCompanionPairRoute
 }
@@ -279,6 +292,13 @@ declare module '@tanstack/react-router' {
       path: '/api/answer-stream'
       fullPath: '/api/answer-stream'
       preLoaderRoute: typeof ApiAnswerStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/live-answer': {
+      id: '/api/live-answer'
+      path: '/api/live-answer'
+      fullPath: '/api/live-answer'
+      preLoaderRoute: typeof ApiLiveAnswerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/admin/desktop-releases': {
@@ -358,6 +378,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   DownloadRoute: DownloadRoute,
   ApiAnswerStreamRoute: ApiAnswerStreamRoute,
+  ApiLiveAnswerRoute: ApiLiveAnswerRoute,
   ApiPublicDesktopReleaseRoute: ApiPublicDesktopReleaseRoute,
   ApiPublicCompanionPairRoute: ApiPublicCompanionPairRoute,
 }

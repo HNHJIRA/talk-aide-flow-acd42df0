@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
-import { SttConnection, type SttState } from "@/lib/stt/stt-connection";
-import { createSttSession, detectQuestion } from "@/lib/copilot.functions";
+import {
+  SttConnection,
+  type SttState,
+  type SttEvent,
+  type SttProfile,
+} from "@/lib/stt/stt-connection";
+import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
+import { TurnTimer, EMPTY_WATERFALL, type LatencyWaterfall, type TurnStatus } from "@/lib/latency";
+import { fastQuestionGate, isPrefetchWorthy, topicTerms } from "@/lib/question-gate";
+
 import {
   CompanionBridge,
   detectCompanion,
@@ -38,7 +46,9 @@ export type Segment = {
 };
 
 export type QuestionItem = {
+  /** Stable client-side turn id; the row id arrives later and never blocks the UI. */
   id: string;
+  dbId: string | null;
   text: string;
   category: string;
   confidence: number;
@@ -48,6 +58,7 @@ export type QuestionItem = {
   firstTokenMs: number | null;
   pinned: boolean;
 };
+
 
 export type DebugInfo = {
   micTrack: string;
@@ -69,8 +80,16 @@ export type DebugInfo = {
   micMode: MicMode;
   micRole: string;
   detectionSources: string;
+  /* --- low-latency pipeline --- */
+  sttProfile: string;
+  turnStatus: TurnStatus;
+  speculativePrepared: number;
+  speculativeCancelled: number;
+  gateRejected: number;
+  classifierCalls: number;
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
+
   companionVersion: string;
   companionOs: string;
   companionBackend: string;
@@ -195,10 +214,16 @@ export function useCopilotSession(opts: Options) {
 
   /* ---------------- persistence ---------------- */
 
+  /* ---------------- persistence (never on the critical path) ---------------- */
+
+  /**
+   * Transcript rows are written fire-and-forget. Nothing in the live answer path
+   * waits for this promise; a failed write degrades history, not latency.
+   */
   const persistSegment = useCallback(
     async (segment: Segment, confidence: number | null, startMs: number | null, endMs: number | null) => {
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) return;
+      if (!auth.user) return null;
       const { data, error } = await supabase
         .from("transcript_segments")
         .insert({
@@ -224,8 +249,314 @@ export function useCopilotSession(opts: Options) {
     [sessionId, pushError],
   );
 
+  /** clientTurnId -> promise of the detected_questions row id (resolved in background). */
+  const questionRowIds = useRef(new Map<string, Promise<string | null>>());
+
+  const persistQuestion = useCallback(
+    (clientId: string, question: string, category: string, confidence: number, segmentId: string | null) => {
+      const promise = (async () => {
+        const { data: auth } = await supabase.auth.getUser();
+        if (!auth.user) return null;
+        const { data, error } = await supabase
+          .from("detected_questions")
+          .insert({
+            user_id: auth.user.id,
+            session_id: sessionId,
+            transcript_segment_id: segmentId,
+            question_text: question,
+            normalized_question: normalize(question),
+            category,
+            confidence,
+            status: "generating",
+          })
+          .select("id")
+          .single();
+        if (error || !data) return null;
+        setQuestions((prev) => prev.map((q) => (q.id === clientId ? { ...q, dbId: data.id } : q)));
+        return data.id;
+      })();
+      questionRowIds.current.set(clientId, promise);
+      return promise;
+    },
+    [sessionId],
+  );
+
+  /* ---------------- turn state machine ---------------- */
+
+  type Turn = {
+    id: string;
+    timer: TurnTimer;
+    status: TurnStatus;
+    text: string;
+    segmentId: string | null;
+    contextKey: string | null;
+    prefetch: Promise<string | null> | null;
+    prefetchTopic: string;
+    decideTimer: ReturnType<typeof setTimeout> | null;
+  };
+
+  const turnRef = useRef<Turn | null>(null);
+  const prefetchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRemoteVoiceAt = useRef<number | null>(null);
+  const segmentsRef = useRef<Segment[]>([]);
+  const questionsRef = useRef<QuestionItem[]>([]);
+  questionsRef.current = questions;
+  const [latency, setLatency] = useState<LatencyWaterfall>(EMPTY_WATERFALL);
+  const [latencyHistory, setLatencyHistory] = useState<LatencyWaterfall[]>([]);
+  const [sttProfile, setSttProfile] = useState("standard — nova-3");
+  const turnStats = useRef({ prepared: 0, cancelled: 0, gateRejected: 0, classifierCalls: 0 });
+
+  const newTurn = useCallback(() => {
+    const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const turn: Turn = {
+      id,
+      timer: new TurnTimer(id),
+      status: "listening",
+      text: "",
+      segmentId: null,
+      contextKey: null,
+      prefetch: null,
+      prefetchTopic: "",
+      decideTimer: null,
+    };
+    turnRef.current = turn;
+    return turn;
+  }, []);
+
+  const currentTurn = useCallback(() => {
+    const turn = turnRef.current;
+    if (!turn || turn.status === "completed" || turn.status === "cancelled") return newTurn();
+    return turn;
+  }, [newTurn]);
+
+  /**
+   * Speculative preparation: as soon as a stabilised interim looks like it could
+   * become a question, retrieve resume context in the background. Nothing is ever
+   * shown to the user from unconfirmed speech — only the retrieval is speculative.
+   */
+  const schedulePrefetch = useCallback(
+    (turn: Turn, interimText: string) => {
+      if (prefetchDebounce.current) clearTimeout(prefetchDebounce.current);
+      prefetchDebounce.current = setTimeout(() => {
+        const topic = topicTerms(interimText) || interimText.slice(0, 120);
+        if (!isPrefetchWorthy(interimText)) return;
+        if (turn.prefetchTopic === topic) return;
+        turn.prefetchTopic = topic;
+        turn.status = "preparing";
+        turnStats.current.prepared += 1;
+        turn.timer.remark("prefetchStart");
+        turn.prefetch = prefetchContext({
+          data: { sessionId, topic, turnId: turn.id },
+        })
+          .then((res) => {
+            turn.timer.remark("prefetchDone");
+            turn.contextKey = res.contextKey;
+            return res.contextKey;
+          })
+          .catch(() => null);
+      }, 250);
+    },
+    [sessionId],
+  );
+
   /* ---------------- answer streaming ---------------- */
 
+  /** rAF-batched token flush: never more than one React commit per frame. */
+  const useFlusher = () => {
+    const frame = useRef<number | null>(null);
+    return useCallback((apply: () => void) => {
+      if (frame.current != null) return;
+      frame.current = requestAnimationFrame(() => {
+        frame.current = null;
+        apply();
+      });
+    }, []);
+  };
+  const scheduleFlush = useFlusher();
+
+  const publishWaterfall = useCallback((timer: TurnTimer) => {
+    const wf = timer.waterfall();
+    setLatency(wf);
+    setLatencyHistory((prev) => [wf, ...prev].slice(0, 8));
+  }, []);
+
+  /**
+   * LIVE answer path. Starts the moment the question is confirmed: no database
+   * round trip, no re-retrieval when context was prefetched, tokens rendered as
+   * they arrive.
+   */
+  const streamLiveAnswer = useCallback(
+    async (turn: Turn, questionText: string, category: string) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const timer = turn.timer;
+      turn.status = "generating";
+      patchDiag({ aiState: "generating", firstTokenMs: null });
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        pushError("Your session expired. Please sign in again.");
+        return;
+      }
+
+      // Give the speculative retrieval a short grace period, then proceed without it.
+      let contextKey: string | null = null;
+      if (turn.prefetch) {
+        contextKey = await Promise.race([
+          turn.prefetch,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 200)),
+        ]);
+      }
+      timer.contextPrefetch = contextKey ? "hit" : turn.prefetch ? "miss" : "none";
+
+      const recentConversation = segmentsRef.current
+        .slice(-12)
+        .map(
+          (s) =>
+            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
+        )
+        .join("\n");
+      const priorQna = questionsRef.current
+        .slice(0, 3)
+        .map((q) => `Q: ${q.text}\nSuggested: ${q.answer.slice(0, 240)}`)
+        .join("\n\n");
+
+      timer.mark("aiRequestStart");
+      let answer = "";
+      let firstToken: number | null = null;
+
+      try {
+        const res = await fetch("/api/live-answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+          body: JSON.stringify({
+            sessionId,
+            questionText,
+            category,
+            contextKey,
+            recentConversation,
+            priorQna,
+          }),
+        });
+        timer.mark("aiResponseHeaders");
+        const serverMs = Number(res.headers.get("X-IC-Server-Ms") ?? "");
+        if (!Number.isNaN(serverMs)) timer.serverTtftMs = serverMs;
+        if (res.headers.get("X-IC-Context") === "hit") timer.contextPrefetch = "hit";
+
+        if (!res.ok || !res.body) {
+          const detail = await res.text().catch(() => "");
+          const message =
+            res.status === 429
+              ? "AI rate limit reached — try again in a moment."
+              : res.status === 402
+                ? "AI credits exhausted. Add credits to keep generating answers."
+                : `AI request failed: ${detail.slice(0, 140) || res.status}`;
+          pushError(message);
+          patchDiag({ aiState: "error" });
+          setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
+          turn.status = "completed";
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            try {
+              const json = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+              const delta = json.choices?.[0]?.delta?.content;
+              if (!delta) continue;
+              if (firstToken === null) {
+                timer.mark("aiFirstToken");
+                firstToken = Math.round(
+                  (timer.marks.aiFirstToken ?? performance.now()) - (timer.marks.aiRequestStart ?? 0),
+                );
+              }
+              answer += delta;
+              const snapshot = answer;
+              scheduleFlush(() => {
+                timer.mark("aiFirstRender");
+                setQuestions((prev) =>
+                  prev.map((q) =>
+                    q.id === turn.id ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
+                  ),
+                );
+                patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
+                publishWaterfall(timer);
+              });
+            } catch {
+              /* partial frame */
+            }
+          }
+        }
+
+        timer.mark("aiComplete");
+        turn.status = "completed";
+        setQuestions((prev) =>
+          prev.map((q) => (q.id === turn.id ? { ...q, answer, status: "answered" } : q)),
+        );
+        patchDiag({ aiState: "answered" });
+        publishWaterfall(timer);
+
+        // Persistence happens strictly after the answer is on screen.
+        void (async () => {
+          const dbId = await questionRowIds.current.get(turn.id);
+          if (!dbId || !answer.trim()) return;
+          const { data: auth } = await supabase.auth.getUser();
+          if (!auth.user) return;
+          const { data: saved } = await supabase
+            .from("generated_answers")
+            .insert({
+              user_id: auth.user.id,
+              session_id: sessionId,
+              question_id: dbId,
+              answer_text: answer,
+              answer_style: "natural",
+              model: "live",
+              generation_ms: Math.round(
+                (timer.marks.aiComplete ?? 0) - (timer.marks.aiRequestStart ?? 0),
+              ),
+              first_token_ms: firstToken,
+            })
+            .select("id")
+            .single();
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === turn.id ? { ...q, answerId: saved?.id ?? null } : q)),
+          );
+          await supabase.from("detected_questions").update({ status: "answered" }).eq("id", dbId);
+        })();
+      } catch (error) {
+        turn.status = "completed";
+        if ((error as Error).name === "AbortError") {
+          patchDiag({ aiState: "stopped" });
+          setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "stopped" } : q)));
+          return;
+        }
+        patchDiag({ aiState: "error" });
+        pushError(error instanceof Error ? error.message : "Answer generation failed.");
+        setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
+      }
+    },
+    [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
+  );
+
+  /**
+   * Existing full-context path, kept for manual regeneration and style variants.
+   * It requires a persisted question row, so it is never used for the live turn.
+   */
   const streamAnswer = useCallback(
     async (questionId: string, overrides?: { style?: string; length?: string }) => {
       abortRef.current?.abort();
@@ -236,9 +567,8 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({ aiState: "generating", firstTokenMs: null });
       setQuestions((prev) =>
-        prev.map((q) => (q.id === questionId ? { ...q, status: "generating", answer: "" } : q)),
+        prev.map((q) => (q.dbId === questionId ? { ...q, status: "generating", answer: "" } : q)),
       );
-
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
@@ -269,7 +599,7 @@ export function useCopilotSession(opts: Options) {
                 : `AI request failed: ${detail.slice(0, 140) || res.status}`;
           pushError(message);
           patchDiag({ aiState: "error" });
-          setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
+          setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)));
           return;
         }
 
@@ -299,8 +629,13 @@ export function useCopilotSession(opts: Options) {
                 patchDiag({ aiState: "streaming", firstTokenMs: firstToken });
               }
               answer += delta;
-              setQuestions((prev) =>
-                prev.map((q) => (q.id === questionId ? { ...q, answer, firstTokenMs: firstToken } : q)),
+              const snapshot = answer;
+              scheduleFlush(() =>
+                setQuestions((prev) =>
+                  prev.map((q) =>
+                    q.dbId === questionId ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
+                  ),
+                ),
               );
             } catch {
               /* partial frame */
@@ -326,87 +661,58 @@ export function useCopilotSession(opts: Options) {
             .single();
           setQuestions((prev) =>
             prev.map((q) =>
-              q.id === questionId ? { ...q, status: "answered", answerId: saved?.id ?? null } : q,
+              q.dbId === questionId
+                ? { ...q, answer, status: "answered", answerId: saved?.id ?? null }
+                : q,
             ),
           );
           await supabase.from("detected_questions").update({ status: "answered" }).eq("id", questionId);
           patchDiag({ aiState: "answered" });
         } else {
           setQuestions((prev) =>
-            prev.map((q) => (q.id === questionId ? { ...q, status: "answered" } : q)),
+            prev.map((q) => (q.dbId === questionId ? { ...q, status: "answered" } : q)),
           );
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
           patchDiag({ aiState: "stopped" });
-          setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "stopped" } : q)));
+          setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "stopped" } : q)));
           return;
         }
         patchDiag({ aiState: "error" });
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
-        setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: "error" } : q)));
+        setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)));
       }
     },
-    [sessionId, pushError, patchDiag],
+    [sessionId, pushError, patchDiag, scheduleFlush],
   );
 
   /* ---------------- question detection ---------------- */
 
-  const runDetection = useCallback(
-    async (utterance: string, segmentId: string | null) => {
-      const text = utterance.trim();
-      if (text.length < 8) return;
+  /** Duplicate / repeat-question guard, shared by every entry point. */
+  const isDuplicate = useCallback((question: string) => {
+    const norm = normalize(question);
+    const now = Date.now();
+    recentQuestions.current = recentQuestions.current.filter((q) => now - q.at < 90_000);
+    if (recentQuestions.current.some((q) => similar(q.norm, norm) > 0.8)) return true;
+    recentQuestions.current.push({ norm, at: now });
+    return false;
+  }, []);
 
-      const recentContext = segments
-        .slice(-8)
-        .map((s) => `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`)
-        .join("\n");
-
-      let result;
-      try {
-        result = await detectQuestion({ data: { text, recentContext } });
-      } catch (error) {
-        pushError(error instanceof Error ? error.message : "Question detection failed.");
-        return;
-      }
-      lastConfidence.current = result.confidence;
-      patchDiag({ lastConfidence: result.confidence, lastQuestion: result.isQuestion ? result.question : `(not a question) ${text.slice(0, 60)}` });
-      if (!result.isQuestion || !result.requiresAnswer) return;
-      if (result.confidence < optsRef.current.confidenceThreshold) return;
-
-      const norm = normalize(result.question);
-      const now = Date.now();
-      recentQuestions.current = recentQuestions.current.filter((q) => now - q.at < 90_000);
-      if (recentQuestions.current.some((q) => similar(q.norm, norm) > 0.8)) return;
-      recentQuestions.current.push({ norm, at: now });
-
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) return;
-      const { data: inserted, error } = await supabase
-        .from("detected_questions")
-        .insert({
-          user_id: auth.user.id,
-          session_id: sessionId,
-          transcript_segment_id: segmentId,
-          question_text: result.question,
-          normalized_question: norm,
-          category: result.category,
-          confidence: result.confidence,
-          status: optsRef.current.autoGenerate ? "generating" : "detected",
-        })
-        .select("id")
-        .single();
-      if (error || !inserted) {
-        pushError("Could not save the detected question.");
-        return;
-      }
+  /** Confirmed question -> UI row + streaming answer. Database writes trail behind. */
+  const commitQuestion = useCallback(
+    (turn: Turn, question: string, category: string, confidence: number) => {
+      lastConfidence.current = confidence;
+      patchDiag({ lastQuestion: question, lastConfidence: confidence });
+      turn.status = "confirmed";
 
       setQuestions((prev) => [
         {
-          id: inserted.id,
-          text: result.question,
-          category: result.category,
-          confidence: result.confidence,
+          id: turn.id,
+          dbId: null,
+          text: question,
+          category,
+          confidence,
           status: "generating",
           answer: "",
           answerId: null,
@@ -416,23 +722,111 @@ export function useCopilotSession(opts: Options) {
         ...prev,
       ]);
 
-      if (optsRef.current.autoGenerate) void streamAnswer(inserted.id);
+      void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
+      if (optsRef.current.autoGenerate) void streamLiveAnswer(turn, question, category);
+      else turn.status = "completed";
     },
-    [segments, sessionId, pushError, streamAnswer, patchDiag],
+    [patchDiag, persistQuestion, streamLiveAnswer],
   );
 
-  const queueDetection = useCallback(
-    (text: string, segmentId: string | null) => {
-      if (!optsRef.current.autoDetect) return;
-      pendingUtterance.current = `${pendingUtterance.current} ${text}`.trim().slice(-600);
-      if (detectTimer.current) clearTimeout(detectTimer.current);
-      detectTimer.current = setTimeout(() => {
-        const utterance = pendingUtterance.current;
-        pendingUtterance.current = "";
-        void runDetection(utterance, segmentId);
-      }, 700);
+  /**
+   * Decide a completed turn. The local gate answers the vast majority instantly;
+   * only ambiguous utterances pay for the AI classifier round trip.
+   */
+  const decideTurn = useCallback(
+    async (turn: Turn) => {
+      const text = turn.text.trim();
+      if (!text || text.length < 6) {
+        turn.status = "completed";
+        return;
+      }
+
+      turn.timer.mark("gateStart");
+      const verdict = fastQuestionGate(text);
+      turn.timer.mark("gateDone");
+
+      if (verdict.decision === "reject") {
+        turnStats.current.gateRejected += 1;
+        turn.status = "completed";
+        patchDiag({ lastQuestion: `(not a question — ${verdict.reason}) ${text.slice(0, 60)}` });
+        return;
+      }
+
+      if (verdict.decision === "question") {
+        if (verdict.confidence < optsRef.current.confidenceThreshold) {
+          turn.status = "completed";
+          return;
+        }
+        if (isDuplicate(verdict.question)) {
+          turn.status = "completed";
+          return;
+        }
+        commitQuestion(turn, verdict.question, verdict.category, verdict.confidence);
+        publishWaterfall(turn.timer);
+        return;
+      }
+
+      // Ambiguous: escalate to the AI classifier (kept for edge cases only).
+      turnStats.current.classifierCalls += 1;
+      turn.timer.classifierUsed = true;
+      turn.timer.mark("classifierStart");
+      const recentContext = segmentsRef.current
+        .slice(-8)
+        .map(
+          (s) =>
+            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
+        )
+        .join("\n");
+      let result;
+      try {
+        result = await detectQuestion({ data: { text, recentContext } });
+      } catch (error) {
+        turn.status = "completed";
+        pushError(error instanceof Error ? error.message : "Question detection failed.");
+        return;
+      }
+      turn.timer.mark("classifierDone");
+      patchDiag({
+        lastConfidence: result.confidence,
+        lastQuestion: result.isQuestion ? result.question : `(not a question) ${text.slice(0, 60)}`,
+      });
+      if (!result.isQuestion || !result.requiresAnswer) {
+        turn.status = "completed";
+        return;
+      }
+      if (result.confidence < optsRef.current.confidenceThreshold) {
+        turn.status = "completed";
+        return;
+      }
+      if (isDuplicate(result.question)) {
+        turn.status = "completed";
+        return;
+      }
+      commitQuestion(turn, result.question, result.category, result.confidence);
+      publishWaterfall(turn.timer);
     },
-    [runDetection],
+    [commitQuestion, isDuplicate, patchDiag, pushError, publishWaterfall],
+  );
+
+  /**
+   * Manual entry points (typed question, promoted microphone line) reuse the same
+   * machine but always skip the local reject rules.
+   */
+  const runDetection = useCallback(
+    async (utterance: string, segmentId: string | null) => {
+      const text = utterance.trim();
+      if (text.length < 4) return;
+      const turn = newTurn();
+      turn.segmentId = segmentId;
+      turn.text = text;
+      turn.timer.mark("speechEnd");
+      turn.timer.mark("sttFinal");
+      const verdict = fastQuestionGate(text);
+      const category = verdict.category;
+      if (isDuplicate(text)) return;
+      commitQuestion(turn, text, category, Math.max(verdict.confidence, 0.9));
+    },
+    [newTurn, isDuplicate, commitQuestion],
   );
 
   /* ---------------- STT wiring ---------------- */
@@ -441,11 +835,41 @@ export function useCopilotSession(opts: Options) {
     (
       source: SourceKind,
       speaker: Speaker,
-      result: { text: string; isFinal: boolean; confidence: number | null; startMs: number | null; endMs: number | null },
+      result: {
+        text: string;
+        isFinal: boolean;
+        confidence: number | null;
+        startMs: number | null;
+        endMs: number | null;
+        event?: SttEvent;
+      },
     ) => {
       const isRemote = source !== "microphone";
+      const mode = optsRef.current.micMode;
+      // Only an interviewer-side stream drives the low-latency machine; STT Test Mode
+      // and opt-in mic-only fallback are the two explicit exceptions.
+      const drivesDetection =
+        optsRef.current.autoDetect &&
+        (isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect));
+
       if (!result.isFinal) {
+        if (result.event === "turn_resumed") {
+          // The speaker kept going: the speculative end-of-turn was wrong.
+          const turn = turnRef.current;
+          if (turn && turn.status === "preparing") turnStats.current.cancelled += 1;
+          return;
+        }
         setInterim((prev) => ({ ...prev, [source]: result.text }));
+        if (drivesDetection && result.text.trim()) {
+          const turn = currentTurn();
+          turn.timer.mark("sttFirstInterim");
+          lastRemoteVoiceAt.current = performance.now();
+          if (result.event === "eager_end_of_turn") {
+            turn.timer.remark("speechEnd");
+            turn.timer.mark("sttStableInterim");
+          }
+          schedulePrefetch(turn, result.text);
+        }
         return;
       }
       setInterim((prev) => ({ ...prev, [source]: "" }));
@@ -487,33 +911,55 @@ export function useCopilotSession(opts: Options) {
         isFinal: true,
         at: Date.now(),
       };
+      segmentsRef.current = [...segmentsRef.current.slice(-400), segment];
       setSegments((prev) => [...prev.slice(-400), segment]);
 
+      // Fire-and-forget: the answer never waits for the transcript insert.
       void persistSegment(segment, result.confidence, result.startMs, result.endMs).then((id) => {
         if (source === "microphone") lastMicSegment.current = { text: result.text, id: id ?? null };
-        // Production rule: only a remote (INTERVIEWER) stream — meeting tab or Zoom
-        // Desktop companion — can auto-trigger question detection. Microphone speech is
-        // CANDIDATE and never fires the pipeline, except in explicit STT Test Mode or
-        // opt-in mic-only fallback auto-detection.
-        const mode = optsRef.current.micMode;
-        const eligible =
-          isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect);
-        if (eligible) queueDetection(result.text, id ?? null);
+        if (turnRef.current && !turnRef.current.segmentId) turnRef.current.segmentId = id ?? null;
       });
+
+      if (!drivesDetection) return;
+
+      const turn = currentTurn();
+      // speechEnd is the last moment we heard voice on this turn — the honest
+      // anchor for "speech end -> first token", not the moment STT finalised.
+      turn.timer.mark("speechEnd", lastRemoteVoiceAt.current ?? performance.now());
+      turn.timer.remark("sttFinal");
+      turn.text = `${turn.text} ${result.text}`.trim().slice(-600);
+
+      if (turn.decideTimer) clearTimeout(turn.decideTimer);
+      // Flux emits one confirmed EndOfTurn, so decide immediately. The classic
+      // pipeline can split a question across finals: allow a short merge window,
+      // shorter when the utterance already ends in terminal punctuation.
+      const delay = result.event === "final" && sttProfileRef.current === "flux" ? 0 : /[?.!]\s*$/.test(result.text) ? 120 : 320;
+      if (delay === 0) void decideTurn(turn);
+      else
+        turn.decideTimer = setTimeout(() => {
+          turn.decideTimer = null;
+          void decideTurn(turn);
+        }, delay);
     },
-    [persistSegment, queueDetection, patchDiag],
+    [persistSegment, patchDiag, currentTurn, schedulePrefetch, decideTurn],
   );
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
   const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
+  const sttProfileRef = useRef<SttProfile>("standard");
 
   const startStt = useCallback(
     (source: SourceKind) => {
       const isRemote = source !== "microphone";
       const setState = isRemote ? setRemoteStt : setLocalStt;
+      // Low-latency pipeline for interviewer audio; the candidate microphone keeps
+      // the standard pipeline (and gets it too in STT Test Mode, which stands in
+      // for the interviewer).
+      const lowLatency = isRemote || optsRef.current.micMode === "test";
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
+        lowLatency,
         onResult: (result) =>
           handleResult(
             isRemote ? remoteSourceRef.current : source,
@@ -524,6 +970,12 @@ export function useCopilotSession(opts: Options) {
                 : "candidate",
             result,
           ),
+        onProfile: (profile, detail) => {
+          if (isRemote || optsRef.current.micMode === "test") {
+            sttProfileRef.current = profile;
+            setSttProfile(detail);
+          }
+        },
         onState: (state, detail) => {
           setState(state);
           if (state === "error" && detail) pushError(detail);
@@ -536,6 +988,7 @@ export function useCopilotSession(opts: Options) {
     },
     [handleResult, pushError],
   );
+
 
 
   // Stable indirection so connect handlers defined above can open an STT socket
@@ -710,11 +1163,15 @@ export function useCopilotSession(opts: Options) {
     startedAt.current = Date.now();
     liveRef.current = true;
     setSessionState("listening");
+    // Warm session + resume caches server-side so the first question of the
+    // interview is as fast as the tenth. Never blocks going live.
+    void primeLiveContext({ data: { sessionId } }).catch(() => undefined);
     await supabase
       .from("interview_sessions")
       .update({ status: "listening", started_at: new Date().toISOString() })
       .eq("id", sessionId);
   }, [startStt, sessionId]);
+
 
   const pause = useCallback(() => {
     // Only gates PCM delivery: the two Deepgram sockets stay open, so resuming
@@ -736,7 +1193,11 @@ export function useCopilotSession(opts: Options) {
     liveRef.current = false;
     abortRef.current?.abort();
     if (detectTimer.current) clearTimeout(detectTimer.current);
+    if (prefetchDebounce.current) clearTimeout(prefetchDebounce.current);
+    if (turnRef.current?.decideTimer) clearTimeout(turnRef.current.decideTimer);
+    turnRef.current = null;
     micStt.current?.stop();
+
     remoteStt_.current?.stop();
     micStt.current = null;
     remoteStt_.current = null;
@@ -775,26 +1236,38 @@ export function useCopilotSession(opts: Options) {
 
   const stopGenerating = useCallback(() => abortRef.current?.abort(), []);
 
+  /**
+   * Regeneration works on the persisted row, which may still be in flight when
+   * the user clicks: resolve the client turn id to its database id first.
+   */
   const regenerate = useCallback(
-    (questionId: string, overrides?: { style?: string; length?: string }) =>
-      streamAnswer(questionId, overrides),
-    [streamAnswer],
+    async (clientId: string, overrides?: { style?: string; length?: string }) => {
+      const known = questionsRef.current.find((q) => q.id === clientId)?.dbId;
+      const dbId = known ?? (await questionRowIds.current.get(clientId)) ?? null;
+      if (!dbId) {
+        pushError("This answer is still being saved — try again in a second.");
+        return;
+      }
+      await streamAnswer(dbId, overrides);
+    },
+    [streamAnswer, pushError],
   );
 
-  const togglePin = useCallback(async (questionId: string) => {
+  const togglePin = useCallback(async (clientId: string) => {
     let next = false;
     setQuestions((prev) =>
       prev.map((q) => {
-        if (q.id !== questionId) return q;
+        if (q.id !== clientId) return q;
         next = !q.pinned;
         return { ...q, pinned: next };
       }),
     );
-    const target = questions.find((q) => q.id === questionId);
+    const target = questionsRef.current.find((q) => q.id === clientId);
     if (target?.answerId) {
       await supabase.from("generated_answers").update({ is_pinned: next }).eq("id", target.answerId);
     }
-  }, [questions]);
+  }, []);
+
 
   /** Mic-only fallback: explicitly treat the last microphone utterance as an interviewer question. */
   const promoteLastMicSegment = useCallback(async () => {
@@ -877,7 +1350,14 @@ export function useCopilotSession(opts: Options) {
           : opts.micMode === "fallback" && opts.fallbackAutoDetect
             ? "microphone (fallback auto-detect) + interviewer stream"
             : "interviewer stream only (meeting tab / Zoom Desktop)",
+      sttProfile,
+      turnStatus: turnRef.current?.status ?? "listening",
+      speculativePrepared: turnStats.current.prepared,
+      speculativeCancelled: turnStats.current.cancelled,
+      gateRejected: turnStats.current.gateRejected,
+      classifierCalls: turnStats.current.classifierCalls,
       companionState,
+
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
       companionBackend: companionHealth?.captureBackend ?? "unknown",
@@ -916,6 +1396,7 @@ export function useCopilotSession(opts: Options) {
       companionHealth,
       companionFormat,
       meetingStatus,
+      sttProfile,
     ],
   );
 
@@ -935,6 +1416,8 @@ export function useCopilotSession(opts: Options) {
     online,
     elapsed,
     debug,
+    latency,
+    latencyHistory,
     companionHealth,
     companionState,
     connectMicrophone,

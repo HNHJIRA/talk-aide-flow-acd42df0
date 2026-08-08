@@ -25,6 +25,7 @@ import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { formatDuration, PLATFORM_LABELS } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { LatencyWaterfallPanel } from "@/components/copilot/LatencyWaterfall";
 
 export const Route = createFileRoute("/_authenticated/session/$sessionId")({
   head: () => ({
@@ -105,6 +106,8 @@ function LiveSession() {
     online,
     elapsed,
     debug,
+    latency,
+    latencyHistory,
     companionHealth,
     companionState,
     connectMicrophone,
@@ -333,7 +336,12 @@ function LiveSession() {
                   ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
                   ["Microphone role", debug.micRole],
                   ["Detection sources", debug.detectionSources],
+                  ["STT profile (interviewer)", debug.sttProfile],
+                  ["Turn state", debug.turnStatus],
+                  ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
+                  ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
                   ["Companion state", debug.companionState],
+
                   ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
                   ["Companion capture backend", debug.companionBackend],
                   ["Interviewer capture method", debug.remoteCaptureMethod],
@@ -359,7 +367,10 @@ function LiveSession() {
                 ))}
               </dl>
             ) : null}
+
+            {showDebug ? <LatencyWaterfallPanel latency={latency} history={latencyHistory} /> : null}
           </div>
+
 
           <div className="panel flex min-h-0 flex-1 flex-col p-5">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
