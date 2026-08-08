@@ -1776,7 +1776,7 @@ export function useCopilotSession(opts: Options) {
     meetingStream.current = null;
     setMicStatus("disconnected");
     setMeetingStatus("disconnected");
-  }, []);
+  }, [clearTurnTimers]);
 
 
   const endSession = useCallback(async () => {
