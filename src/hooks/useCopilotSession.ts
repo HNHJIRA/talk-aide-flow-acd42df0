@@ -1534,6 +1534,8 @@ export function useCopilotSession(opts: Options) {
       specStarted: turnStats.current.specStarted,
       specReused: turnStats.current.specReused,
       specAborted: turnStats.current.specAborted,
+      gateRejected: turnStats.current.gateRejected,
+
 
       classifierCalls: turnStats.current.classifierCalls,
       companionState,
