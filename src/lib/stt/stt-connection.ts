@@ -5,7 +5,13 @@ export type SttState = "idle" | "connecting" | "active" | "reconnecting" | "erro
 /** Which Deepgram pipeline is actually carrying this socket right now. */
 export type SttProfile = "flux" | "standard";
 
-export type SttEvent = "interim" | "eager_end_of_turn" | "turn_resumed" | "final";
+export type SttEvent =
+  | "interim"
+  | "start_of_turn"
+  | "eager_end_of_turn"
+  | "turn_resumed"
+  | "final";
+
 
 export type SttResult = {
   text: string;
