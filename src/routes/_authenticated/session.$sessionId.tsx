@@ -364,7 +364,10 @@ function LiveSession() {
                 ))}
               </dl>
             ) : null}
+
+            {showDebug ? <LatencyWaterfallPanel latency={latency} history={latencyHistory} /> : null}
           </div>
+
 
           <div className="panel flex min-h-0 flex-1 flex-col p-5">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
