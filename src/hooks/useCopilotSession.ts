@@ -303,6 +303,8 @@ export function useCopilotSession(opts: Options) {
   questionsRef.current = questions;
   const [latency, setLatency] = useState<LatencyWaterfall>(EMPTY_WATERFALL);
   const [latencyHistory, setLatencyHistory] = useState<LatencyWaterfall[]>([]);
+  const [aiCall, setAiCall] = useState<LiveCallMeta | null>(null);
+
   const [sttProfile, setSttProfile] = useState("standard — nova-3");
   const turnStats = useRef({ prepared: 0, cancelled: 0, gateRejected: 0, classifierCalls: 0 });
 
