@@ -412,23 +412,46 @@ export function useCopilotSession(opts: Options) {
   }, []);
 
   /**
-   * LIVE answer path. Starts the moment the question is confirmed: no database
-   * round trip, no re-retrieval when context was prefetched, tokens rendered as
-   * they arrive.
+   * LIVE answer path. Can run in two modes:
+   *  - confirmed  : the question is final, tokens paint as they arrive.
+   *  - speculative: started on Deepgram's eager end-of-turn. The model runs and
+   *    its text is buffered but NEVER shown; on confirmation the same in-flight
+   *    request is promoted and the buffer is flushed in one paint. If the
+   *    interviewer keeps talking, the request is aborted and the text discarded.
    */
   const streamLiveAnswer = useCallback(
-    async (turn: Turn, questionText: string, category: string) => {
-      abortRef.current?.abort();
+    async (
+      turn: Turn,
+      questionText: string,
+      category: string,
+      opts: { speculative?: boolean } = {},
+    ) => {
+      const speculative = opts.speculative === true;
       const controller = new AbortController();
-      abortRef.current = controller;
+      if (speculative) {
+        turn.spec = {
+          question: questionText,
+          category,
+          controller,
+          buffer: "",
+          promoted: false,
+          aborted: false,
+          flush: null,
+        };
+        turn.timer.speculative = true;
+        turnStats.current.specStarted += 1;
+      } else {
+        abortRef.current?.abort();
+        abortRef.current = controller;
+      }
       const timer = turn.timer;
       turn.status = "generating";
-      patchDiag({ aiState: "generating", firstTokenMs: null });
+      if (!speculative) patchDiag({ aiState: "generating", firstTokenMs: null });
 
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) {
-        pushError("Your session expired. Please sign in again.");
+        if (!speculative) pushError("Your session expired. Please sign in again.");
         return;
       }
 
@@ -441,6 +464,7 @@ export function useCopilotSession(opts: Options) {
         ]);
       }
       timer.contextPrefetch = contextKey ? "hit" : turn.prefetch ? "miss" : "none";
+
 
       const recentConversation = segmentsRef.current
         .slice(-12)
