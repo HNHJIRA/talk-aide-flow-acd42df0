@@ -386,13 +386,14 @@ export function liveSystemPrompt(ctx: LiveSessionContext, style: string, length:
 
 ${answerInstructions(style, length, ctx.answerLanguage)}
 This is a LIVE interview: the candidate must be able to start speaking your first sentence immediately. Lead with the answer, no preamble.
+Keep the initial suggestion to 40-80 words, or 3-4 short speaking bullets. The candidate can ask for more detail afterwards.
 
 CANDIDATE PROFILE:
 ${ctx.profileLine}
 TARGET: ${ctx.targetRole ?? "unspecified"} at ${ctx.companyName ?? "unspecified company"}
 
-JOB DESCRIPTION:
-${ctx.jobDescription ?? "(none provided)"}`;
+JOB CONTEXT:
+${(ctx.jobDescription ?? "(none provided)").slice(0, 700)}`;
 }
 
 export function liveUserPrompt(args: {
@@ -403,34 +404,56 @@ export function liveUserPrompt(args: {
   priorQna: string;
   rollingSummary: string | null;
 }) {
-  return `VERIFIED RESUME / DOCUMENT EXCERPTS (only source of personal facts):
-${args.context || "(no resume content available — do not invent any personal history)"}
-
-SESSION SUMMARY SO FAR:
-${args.rollingSummary ?? "(none)"}
-
-RECENT CONVERSATION:
-${args.recentConversation || "(none)"}
-
-EARLIER QUESTIONS AND SUGGESTIONS:
-${args.priorQna || "(none)"}
-
-INTERVIEW QUESTION (category: ${args.category}):
-${args.question}
-
-Write what the candidate should say now.`;
+  const parts = [
+    `VERIFIED RESUME EXCERPTS (only source of personal facts):\n${
+      args.context.slice(0, 2500) ||
+      "(no resume content available — do not invent any personal history)"
+    }`,
+  ];
+  if (args.rollingSummary) parts.push(`SESSION SUMMARY:\n${args.rollingSummary.slice(0, 500)}`);
+  if (args.recentConversation) parts.push(`RECENT CONVERSATION:\n${args.recentConversation}`);
+  if (args.priorQna) parts.push(`EARLIER Q&A:\n${args.priorQna}`);
+  parts.push(
+    `INTERVIEW QUESTION (category: ${args.category}):\n${args.question}\n\nWrite what the candidate should say now.`,
+  );
+  return parts.join("\n\n");
 }
 
-/** Body for the live streaming call, including optional speed knobs. */
-export function liveAnswerBody(messages: { role: string; content: string }[]) {
+export type LiveCallConfig = {
+  model: string;
+  reasoningEffort: string;
+  serviceTier: string;
+  maxOutput: number;
+};
+
+export const liveCallConfig = (): LiveCallConfig => ({
+  model: LIVE_ANSWER_MODEL,
+  reasoningEffort: LIVE_REASONING_EFFORT,
+  serviceTier: LIVE_SERVICE_TIER,
+  maxOutput: LIVE_MAX_OUTPUT,
+});
+
+/**
+ * Body for the live streaming call. The output-token field and the sampling
+ * knobs differ per vendor: the gpt-5.6 family rejects `max_tokens` outright.
+ */
+export function liveAnswerBody(
+  messages: { role: string; content: string }[],
+  cfg: LiveCallConfig = liveCallConfig(),
+) {
+  const isOpenAi = cfg.model.startsWith("openai/");
   const body: Record<string, unknown> = {
-    model: LIVE_ANSWER_MODEL,
+    model: cfg.model,
     stream: true,
-    temperature: 0.4,
-    max_tokens: LIVE_MAX_OUTPUT,
+    stream_options: { include_usage: true },
     messages,
+    ...(isOpenAi
+      ? { max_completion_tokens: cfg.maxOutput }
+      : { max_tokens: cfg.maxOutput, temperature: 0.4 }),
   };
-  if (LIVE_REASONING_EFFORT) body["reasoning_effort"] = LIVE_REASONING_EFFORT;
-  if (LIVE_SERVICE_TIER) body["service_tier"] = LIVE_SERVICE_TIER;
+  if (cfg.reasoningEffort) body["reasoning_effort"] = cfg.reasoningEffort;
+  if (cfg.serviceTier) body["service_tier"] = cfg.serviceTier;
   return body;
+}
+
 }
