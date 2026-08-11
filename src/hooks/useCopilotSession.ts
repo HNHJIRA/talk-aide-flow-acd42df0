@@ -672,6 +672,21 @@ export function useCopilotSession(opts: Options) {
             .join("\n\n")
         : "";
 
+      // LIVE CONTEXT PACKET: small, ranked, attributed. Never the transcript.
+      const packet = buildContextPacket(memory.current, questionText, turn.corrections);
+      if (!speculative)
+        setMemoryView((prev) => ({
+          ...prev,
+          topic: packet.currentTopic || "—",
+          lastPacket: {
+            turns: packet.recentTurns.length,
+            facts: packet.meetingFacts.length,
+            claims: packet.candidateClaims.length,
+            subQuestions: packet.subQuestions.length,
+            corrections: packet.corrections.length,
+          },
+        }));
+
       timer.remark("aiRequestStart");
       let answer = "";
       let firstToken: number | null = null;
@@ -713,6 +728,7 @@ export function useCopilotSession(opts: Options) {
             recentConversation,
             priorQna,
             isFollowUp,
+            packet,
           }),
         });
         timer.mark("aiResponseHeaders");
@@ -830,6 +846,19 @@ export function useCopilotSession(opts: Options) {
         patchDiag({ aiState: "answered" });
         publishWaterfall(timer);
 
+        // Meeting memory: what was asked and what we suggested, so the next
+        // follow-up does not repeat it.
+        memory.current.recordAnswer(questionText, answer);
+        memoryPending.current.push(`COPILOT SUGGESTED: ${answer.slice(0, 400)}`);
+        setMemoryView((prev) => ({
+          ...prev,
+          facts: memory.current.facts.length,
+          claims: memory.current.claims.length,
+          corrections: memory.current.corrections.length,
+          turns: memory.current.turns.length,
+        }));
+        syncMeetingMemory();
+
         // Persistence happens strictly after the answer is on screen.
         void (async () => {
           const dbId = await questionRowIds.current.get(turn.id);
@@ -880,7 +909,7 @@ export function useCopilotSession(opts: Options) {
       }
     },
 
-    [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
+    [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall, syncMeetingMemory],
   );
 
   /**
