@@ -1943,6 +1943,9 @@ export function useCopilotSession(opts: Options) {
 
   const endSession = useCallback(async () => {
     setSessionState("ending");
+    // Flush whatever meeting memory has not been folded into the summary yet,
+    // so the end-of-meeting notes see the whole call.
+    syncMeetingMemory(true);
     const duration = startedAt.current ? Math.round((Date.now() - startedAt.current) / 1000) : 0;
     teardown();
     await supabase
@@ -1955,7 +1958,7 @@ export function useCopilotSession(opts: Options) {
       .eq("id", sessionId);
     setSessionState("completed");
     return duration;
-  }, [teardown, sessionId]);
+  }, [teardown, sessionId, syncMeetingMemory]);
 
   const stopGenerating = useCallback(() => abortRef.current?.abort(), []);
 
