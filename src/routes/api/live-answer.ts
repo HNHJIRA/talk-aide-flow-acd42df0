@@ -12,6 +12,17 @@ type Body = {
   answerStyle?: string;
   answerLength?: string;
   isFollowUp?: boolean;
+  /** Compact conversational context packet (meeting memory, corrections, sub-questions). */
+  packet?: {
+    resolvedQuestion?: string;
+    currentTopic?: string;
+    subQuestions?: string[];
+    recentTurns?: string[];
+    meetingFacts?: string[];
+    candidateClaims?: string[];
+    previousAnswerSummary?: string;
+    corrections?: string[];
+  };
   /** Development-only: benchmark the exact production path on this prompt. */
   benchmark?: boolean;
   benchmarkModels?: string[];
@@ -115,7 +126,7 @@ export const Route = createFileRoute("/api/live-answer")({
             db,
             userId,
             ctx.resumeDocumentId,
-            body.questionText,
+            body.packet?.resolvedQuestion || body.questionText,
             3,
           );
           contextSource = "retrieval";
@@ -138,6 +149,7 @@ export const Route = createFileRoute("/api/live-answer")({
           recentConversation: body.recentConversation ?? "",
           priorQna: body.priorQna ?? "",
           isFollowUp: body.isFollowUp ?? false,
+          ...(body.packet ? { packet: body.packet } : {}),
         });
         const promptMs = Date.now() - promptStart;
 
@@ -288,6 +300,11 @@ export const Route = createFileRoute("/api/live-answer")({
                   conversationChars: stats.conversationChars,
                   priorQnaChars: stats.priorQnaChars,
                   jobChars: stats.jobChars,
+                  briefChars: stats.briefChars,
+                  projectChars: stats.projectChars,
+                  meetingChars: stats.meetingChars,
+                  subQuestions: stats.subQuestions,
+                  corrections: stats.corrections,
                   serverRequestSentMs: exec.requestSentMs,
                   upstreamHeadersMs: exec.headersMs,
                   upstreamFirstEventMs: sniffer.firstEventMs,

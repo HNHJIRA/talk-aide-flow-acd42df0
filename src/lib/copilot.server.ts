@@ -262,7 +262,14 @@ export type LiveSessionContext = {
   answerLanguage: string;
   rollingSummary: string | null;
   profileLine: string;
+  /** Pre-meeting knowledge base, compiled once at Go Live. */
+  meetingBrief: string | null;
+  /** Carried-over knowledge from earlier meetings on the same project. */
+  projectMemory: string | null;
+  /** Claims the user explicitly does not want made on their behalf. */
+  avoidClaims: string | null;
 };
+
 
 type Chunk = { content: string; chunk_type: string; document_id: string };
 
@@ -283,11 +290,11 @@ export async function getLiveSessionContext(
     if (cached) return cached;
   }
 
-  const [{ data: session }, { data: profile }] = await Promise.all([
+  const [{ data: session }, { data: profile }, { data: prep }] = await Promise.all([
     db
       .from("interview_sessions")
       .select(
-        "id, user_id, target_role, company_name, job_description, resume_document_id, answer_style, answer_length, answer_language, rolling_summary",
+        "id, user_id, target_role, company_name, job_description, resume_document_id, answer_style, answer_length, answer_language, rolling_summary, project_id",
       )
       .eq("id", sessionId)
       .maybeSingle(),
@@ -296,9 +303,45 @@ export async function getLiveSessionContext(
       .select("full_name, current_position, target_role, experience_level")
       .eq("user_id", userId)
       .maybeSingle(),
+    db
+      .from("meeting_preparations")
+      .select("*")
+      .eq("session_id", sessionId)
+      .maybeSingle(),
   ]);
 
   if (!session || session.user_id !== userId) return null;
+
+  // Project memory: what earlier meetings on the same project established.
+  let projectMemory: string | null = null;
+  if (session.project_id) {
+    const [{ data: project }, { data: priorNotes }] = await Promise.all([
+      db
+        .from("projects")
+        .select("name, client_name, description, shared_notes")
+        .eq("id", session.project_id)
+        .maybeSingle(),
+      db
+        .from("interview_sessions")
+        .select("id, rolling_summary, created_at")
+        .eq("project_id", session.project_id)
+        .neq("id", sessionId)
+        .order("created_at", { ascending: false })
+        .limit(3),
+    ]);
+    const lines = [
+      project?.name ? `Project: ${project.name}` : "",
+      project?.client_name ? `Client: ${project.client_name}` : "",
+      project?.description ? `About: ${project.description}` : "",
+      project?.shared_notes ? `Standing notes: ${project.shared_notes}` : "",
+      ...(priorNotes ?? [])
+        .filter((s) => s.rolling_summary)
+        .map((s, i) => `Earlier meeting ${i + 1}: ${s.rolling_summary}`),
+    ].filter(Boolean);
+    projectMemory = lines.length ? lines.join("\n").slice(0, LIVE_BUDGET.project) : null;
+  }
+
+  const meetingBrief = prep ? compileMeetingBrief(prep as Record<string, string | null>) : null;
 
   const ctx: LiveSessionContext = {
     sessionId: session.id,
@@ -312,10 +355,49 @@ export async function getLiveSessionContext(
     answerLanguage: session.answer_language ?? "en",
     rollingSummary: session.rolling_summary,
     profileLine: `Name: ${profile?.full_name ?? "unknown"} | Current: ${profile?.current_position ?? "unknown"} | Target: ${session.target_role ?? profile?.target_role ?? "unknown"} | Level: ${profile?.experience_level ?? "unknown"}`,
+    meetingBrief,
+    projectMemory,
+    avoidClaims: (prep?.avoid_claims ?? null) || null,
   };
   cacheSet(sessionCtxCache, key, ctx);
   return ctx;
 }
+
+/**
+ * Compile the pre-meeting knowledge base into the stable brief that becomes
+ * part of the cached system prompt. Pure formatting — nothing is generated.
+ */
+export function compileMeetingBrief(prep: Record<string, string | null>): string | null {
+  const row = (label: string, key: string) => {
+    const value = (prep[key] ?? "").toString().replace(/\s+/g, " ").trim();
+    return value ? `${label}: ${value}` : "";
+  };
+  const brief = [
+    row("Meeting", "meeting_title"),
+    row("Type", "meeting_type"),
+    row("Company/client", "company_name"),
+    row("Client website", "client_website"),
+    row("Project", "project_name"),
+    row("Project description", "project_description"),
+    row("Role discussed", "role_discussed"),
+    row("Requirements", "requirements"),
+    row("Goals", "goals"),
+    row("Challenges", "challenges"),
+    row("Tech stack", "tech_stack"),
+    row("Budget", "budget_notes"),
+    row("Timeline", "timeline"),
+    row("Known client concerns", "client_concerns"),
+    row("Important facts", "important_facts"),
+    row("Emphasise", "emphasize"),
+    row("Previous communication", "previous_communication"),
+    row("Notes", "custom_notes"),
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, LIVE_BUDGET.brief);
+  return brief || null;
+}
+
 
 /** Already-indexed chunks only — no parsing/chunking/embedding ever happens here. */
 async function getUserChunks(db: ReturnType<typeof serviceClient>, userId: string): Promise<Chunk[]> {
@@ -341,7 +423,16 @@ export const LIVE_BUDGET = {
   priorQna: 400,
   summary: 300,
   job: 350,
+  /** Pre-meeting knowledge base (stable, cached in the system prompt). */
+  brief: 1400,
+  /** Carried-over project knowledge from earlier meetings. */
+  project: 700,
+  /** Live meeting memory sent per question. */
+  meetingTurns: 700,
+  meetingFacts: 400,
+  claims: 300,
 };
+
 
 /** Top-k keyword retrieval over the cached chunk set. */
 export async function retrieveLiveContext(
@@ -441,22 +532,69 @@ export function readPrefetchedContext(key: string | null | undefined): string | 
 /**
  * Stable prompt prefix (identical bytes across every request in a session) so
  * nothing forces the provider to re-read a freshly-built instruction block.
+ * The pre-meeting brief and project memory live HERE, not in the per-question
+ * payload: they never change mid-meeting, so they stay prefix-cacheable.
  */
 export function liveSystemPrompt(ctx: LiveSessionContext, style: string, length: string) {
-  return `${NO_FABRICATION_RULES}
+  return `You are a real-time conversational meeting copilot sitting beside the speaker on a live call.
+Respond as if you are continuing THIS conversation, not answering an isolated prompt.
+Be direct, natural, confident and practical. Prefer spoken language over written prose.
+Never open with "Here are three key points", "Firstly", "In conclusion" or any other essay scaffolding — say the thing.
+Resolve pronouns ("it", "that", "those", "this") from the meeting context supplied below.
+If the other person corrected themselves, answer the CORRECTED meaning and ignore the retracted words.
+Reference what was already discussed when it genuinely helps ("since you said the main goal is..."), but never force it.
+Do not repeat an answer already given — answer only the new part of a follow-up.
+Answer the actual intent behind the question (cost, risk, timeline, complexity), not just its literal words.
+
+TRUTHFULNESS BOUNDARY (hard rule):
+- Verified in the candidate context below → speak about it confidently as personal experience.
+- Not verified but within professional knowledge → be confident about the APPROACH: "I can handle that — the way I'd do it is...".
+- Never invent employers, clients, projects, revenue, years of experience, team sizes, certifications, dates or achievements.
+- Never answer with "I don't know" or "I can't help with that"; give a concrete practical approach instead.
+${ctx.avoidClaims ? `- The speaker explicitly does NOT want these claims made on their behalf: ${ctx.avoidClaims.slice(0, 300)}` : ""}
 
 ${answerInstructions(style, length, ctx.answerLanguage)}
-This is a LIVE interview: the candidate must be able to start speaking your first sentence immediately. Lead with the answer, no preamble.
-Keep the initial suggestion to 40-80 words, or 3-4 short speaking bullets. The candidate can ask for more detail afterwards.
+This is LIVE: the speaker must be able to start saying your first sentence immediately. Lead with the answer.
+Keep it to 50-100 words. Specificity must come from the meeting context, not from length.
 
-CANDIDATE PROFILE:
+SPEAKER PROFILE:
 ${ctx.profileLine}
 TARGET: ${ctx.targetRole ?? "unspecified"} at ${ctx.companyName ?? "unspecified company"}
+${
+  ctx.meetingBrief
+    ? `
+MEETING BRIEF (prepared before this call — treat as established fact):
+${ctx.meetingBrief}`
+    : ""
+}${
+    ctx.projectMemory
+      ? `
+PROJECT MEMORY (earlier meetings on this project):
+${ctx.projectMemory}`
+      : ""
+  }
 
-JOB CONTEXT:
+JOB / PROJECT CONTEXT:
 ${(ctx.jobDescription ?? "(none provided)").slice(0, LIVE_BUDGET.job)}`;
 }
 
+/** The compact per-question packet assembled client-side. */
+export type LivePacket = {
+  resolvedQuestion?: string;
+  currentTopic?: string;
+  subQuestions?: string[];
+  recentTurns?: string[];
+  meetingFacts?: string[];
+  candidateClaims?: string[];
+  previousAnswerSummary?: string;
+  corrections?: string[];
+};
+
+/**
+ * Knowledge priority (highest first): current turn > live meeting conversation
+ * > meeting knowledge base > verified profile/resume > documents > job spec >
+ * general model knowledge. The prompt is ordered to make that explicit.
+ */
 export function liveUserPrompt(args: {
   question: string;
   category: string;
@@ -464,20 +602,45 @@ export function liveUserPrompt(args: {
   recentConversation: string;
   priorQna: string;
   rollingSummary: string | null;
+  packet?: LivePacket;
 }) {
-  const parts = [
-    `VERIFIED RESUME EXCERPTS (only source of personal facts):\n${
-      args.context.slice(0, LIVE_BUDGET.resume) ||
-      "(no resume content available — do not invent any personal history)"
-    }`,
-  ];
+  const p = args.packet ?? {};
+  const parts: string[] = [];
+
+  if (p.corrections?.length)
+    parts.push(
+      `SELF-CORRECTIONS IN THIS TURN (the speaker retracted the first wording — answer the second):\n${p.corrections.join("\n")}`,
+    );
+  if (p.recentTurns?.length)
+    parts.push(`LIVE MEETING (most recent turns):\n${p.recentTurns.join("\n").slice(-LIVE_BUDGET.meetingTurns)}`);
+  else if (args.recentConversation)
+    parts.push(`LIVE MEETING (most recent turns):\n${args.recentConversation.slice(-LIVE_BUDGET.conversation)}`);
+  if (p.meetingFacts?.length)
+    parts.push(
+      `FACTS ESTABLISHED IN THIS MEETING (attributed — do not mix up who said what):\n${p.meetingFacts.join("\n").slice(0, LIVE_BUDGET.meetingFacts)}`,
+    );
+  if (p.candidateClaims?.length)
+    parts.push(
+      `WHAT THE SPEAKER HAS ALREADY CLAIMED (stay consistent, never contradict):\n${p.candidateClaims.join("\n").slice(0, LIVE_BUDGET.claims)}`,
+    );
   if (args.rollingSummary)
-    parts.push(`SESSION SUMMARY:\n${args.rollingSummary.slice(0, LIVE_BUDGET.summary)}`);
-  if (args.recentConversation)
-    parts.push(`RECENT CONVERSATION:\n${args.recentConversation.slice(-LIVE_BUDGET.conversation)}`);
-  if (args.priorQna) parts.push(`EARLIER Q&A:\n${args.priorQna.slice(-LIVE_BUDGET.priorQna)}`);
+    parts.push(`MEETING SUMMARY SO FAR:\n${args.rollingSummary.slice(0, LIVE_BUDGET.summary)}`);
   parts.push(
-    `INTERVIEW QUESTION (category: ${args.category}):\n${args.question}\n\nWrite what the candidate should say now.`,
+    `VERIFIED PERSONAL BACKGROUND (only source of personal facts):\n${
+      args.context.slice(0, LIVE_BUDGET.resume) ||
+      "(no verified background available — do not invent any personal history)"
+    }`,
+  );
+  if (p.previousAnswerSummary)
+    parts.push(`ALREADY SAID (do not repeat this):\n${p.previousAnswerSummary.slice(0, 400)}`);
+  else if (args.priorQna) parts.push(`EARLIER Q&A:\n${args.priorQna.slice(-LIVE_BUDGET.priorQna)}`);
+
+  const question = p.resolvedQuestion?.trim() || args.question;
+  const subs = p.subQuestions?.length
+    ? `\nThis one turn contains several parts — cover them all in ONE natural answer:\n${p.subQuestions.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+    : "";
+  parts.push(
+    `CURRENT TOPIC: ${p.currentTopic || "(opening)"}\n\nTHEY JUST ASKED (category: ${args.category}):\n${question}${subs}\n\nSay what the speaker should say now — one continuous, conversational answer.`,
   );
   return parts.join("\n\n");
 }
@@ -493,6 +656,11 @@ export type LivePromptStats = {
   priorQnaChars: number;
   jobChars: number;
   summaryChars: number;
+  briefChars: number;
+  projectChars: number;
+  meetingChars: number;
+  subQuestions: number;
+  corrections: number;
 };
 
 /**
@@ -510,6 +678,7 @@ export function buildLiveMessages(args: {
   priorQna: string;
   /** Follow-ups need earlier Q&A; a fresh question does not. */
   isFollowUp?: boolean;
+  packet?: LivePacket;
 }): { messages: LiveMessage[]; stats: LivePromptStats } {
   const resume = args.context.slice(0, LIVE_BUDGET.resume);
   const conversation = (args.recentConversation ?? "").slice(-LIVE_BUDGET.conversation);
@@ -522,7 +691,10 @@ export function buildLiveMessages(args: {
     recentConversation: conversation,
     priorQna,
     rollingSummary: args.ctx.rollingSummary,
+    ...(args.packet ? { packet: args.packet } : {}),
   });
+
+  const meetingChars = (args.packet?.recentTurns ?? []).join("\n").length;
 
   return {
     messages: [
@@ -534,11 +706,17 @@ export function buildLiveMessages(args: {
       systemChars: system.length,
       userChars: user.length,
       resumeChars: resume.length,
-      conversationChars: conversation.length,
+      conversationChars: meetingChars || conversation.length,
       priorQnaChars: priorQna.length,
       jobChars: (args.ctx.jobDescription ?? "").slice(0, LIVE_BUDGET.job).length,
       summaryChars: (args.ctx.rollingSummary ?? "").slice(0, LIVE_BUDGET.summary).length,
+      briefChars: (args.ctx.meetingBrief ?? "").length,
+      projectChars: (args.ctx.projectMemory ?? "").length,
+      meetingChars,
+      subQuestions: args.packet?.subQuestions?.length ?? 0,
+      corrections: args.packet?.corrections?.length ?? 0,
     },
+
   };
 }
 
