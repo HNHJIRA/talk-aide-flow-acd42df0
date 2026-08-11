@@ -270,7 +270,9 @@ export const saveMeetingPrep = createServerFn({ method: "POST" })
       user_id: userId,
       session_id: data.sessionId,
       project_id: data.projectId ?? null,
-      ...data.prep,
+      ...(Object.fromEntries(
+        Object.entries(data.prep).map(([k, v]) => [k, (v ?? null) || null]),
+      ) as Record<string, string | null>),
       brief: compileMeetingBrief(data.prep as Record<string, string | null>),
     };
     const { error } = await supabase.from("meeting_preparations").upsert(row, {
@@ -405,7 +407,7 @@ Invent nothing.`,
       .maybeSingle();
     const projectId = session?.project_id ?? null;
 
-    const writes: Promise<unknown>[] = [];
+    const writes: PromiseLike<unknown>[] = [];
     if (summary) {
       writes.push(
         supabase.from("interview_sessions").update({ rolling_summary: summary }).eq("id", data.sessionId),
