@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MacDownloadButton } from "@/components/download/MacDownloadButton";
+import { listProjects, saveMeetingPrep, upsertProject } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,35 @@ function NewSession() {
   const [jobDescription, setJobDescription] = useState("");
   const [busy, setBusy] = useState(false);
 
+  /* ---- meeting prep knowledge base ---- */
+  const [projectId, setProjectId] = useState<string>("");
+  const [newProject, setNewProject] = useState("");
+  const [prep, setPrep] = useState({
+    meeting_title: "",
+    meeting_type: "client_call",
+    client_website: "",
+    project_description: "",
+    requirements: "",
+    goals: "",
+    challenges: "",
+    tech_stack: "",
+    budget_notes: "",
+    timeline: "",
+    client_concerns: "",
+    important_facts: "",
+    emphasize: "",
+    avoid_claims: "",
+    previous_communication: "",
+    custom_notes: "",
+  });
+  const setPrepField = (key: keyof typeof prep) => (value: string) =>
+    setPrep((prev) => ({ ...prev, [key]: value }));
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => listProjects(),
+  });
+
   const caps = detectCapabilities();
 
   const { data: resume } = useQuery({
@@ -66,6 +96,14 @@ function NewSession() {
     try {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) throw new Error("Not signed in.");
+      let linkedProject = projectId || null;
+      if (!linkedProject && newProject.trim()) {
+        const created = await upsertProject({
+          data: { name: newProject.trim(), ...(company ? { clientName: company } : {}) },
+        });
+        linkedProject = created?.id ?? null;
+      }
+
       const { data, error } = await supabase
         .from("interview_sessions")
         .insert({
@@ -75,12 +113,32 @@ function NewSession() {
           company_name: company || null,
           job_description: jobDescription || null,
           meeting_platform: platform,
+          project_id: linkedProject,
           resume_document_id: resume?.id ?? null,
           status: "active",
         })
         .select("id")
         .single();
       if (error) throw error;
+
+      // The knowledge base is compiled BEFORE Go Live so nothing is parsed
+      // during the meeting itself.
+      await saveMeetingPrep({
+        data: {
+          sessionId: data.id,
+          projectId: linkedProject,
+          prep: {
+            ...prep,
+            meeting_title: prep.meeting_title || (role ? `${role}${company ? ` @ ${company}` : ""}` : ""),
+            company_name: company,
+            project_name: newProject.trim() || projects.find((p) => p.id === projectId)?.name || "",
+            role_discussed: role,
+          },
+        },
+      }).catch(() => {
+        /* prep is optional — never block going live */
+      });
+
       void navigate({ to: "/session/$sessionId", params: { sessionId: data.id } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start session");
