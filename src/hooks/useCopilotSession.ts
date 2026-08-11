@@ -2168,6 +2168,7 @@ export function useCopilotSession(opts: Options) {
       sttProfile,
       turnView,
       turnSilenceMs,
+      memoryView,
     ],
   );
 
