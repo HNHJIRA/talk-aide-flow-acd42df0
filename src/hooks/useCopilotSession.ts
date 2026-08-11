@@ -1537,6 +1537,18 @@ export function useCopilotSession(opts: Options) {
         if (turnRef.current && !turnRef.current.segmentId) turnRef.current.segmentId = id ?? null;
       });
 
+      // Every finalised segment enters meeting memory with its attribution:
+      // client facts and candidate claims are never mixed.
+      memory.current.addTurn(
+        speaker === "interviewer" ? "interviewer" : speaker === "test" ? "test" : "candidate",
+        result.text,
+      );
+      memoryPending.current.push(
+        `${speaker === "interviewer" ? "CLIENT" : speaker === "test" ? "TEST" : "ME"}: ${result.text}`,
+      );
+      if (memoryPending.current.length > 60) memoryPending.current = memoryPending.current.slice(-60);
+      syncMeetingMemory();
+
       if (!drivesDetection) return;
 
       const turn = activeTurn(result.text);
@@ -1551,7 +1563,40 @@ export function useCopilotSession(opts: Options) {
       // Stage C silence deadline.
       turn.segments.push(result.text.trim());
       if (turn.segments.length > 1) turnStats.current.merged += 1;
-      turn.text = turn.segments.join(" ").trim().slice(-600);
+      turn.raw = turn.segments.join(" ").trim().slice(-800);
+
+      // SPEECH REPAIR: the assembled turn is re-resolved on every segment, so a
+      // correction arriving in a later segment rewrites the meaning of the whole
+      // turn instead of producing a second, unrelated question.
+      const repaired = repairSpeech(turn.raw);
+      const hadCorrections = turn.corrections.length;
+      turn.corrections = repaired.corrections;
+      turn.text = repaired.resolved.slice(-600);
+      if (repaired.corrections.length > hadCorrections) {
+        memory.current.recordCorrections(repaired.corrections.slice(hadCorrections));
+        setMemoryView((prev) => ({ ...prev, corrections: memory.current.corrections.length }));
+        // Anything already generated was based on the retracted wording: throw it
+        // away and bump the revision so stale tokens can never paint.
+        if (turn.spec && !turn.spec.promoted) {
+          turnStats.current.specAborted += 1;
+          turn.spec.aborted = true;
+          turn.spec.controller.abort();
+          turn.spec = null;
+          turn.timer.speculativeCancelled = true;
+        }
+        if (turn.answerController) {
+          turn.answerController.abort();
+          turn.answerController = null;
+          turnStats.current.superseded += 1;
+        }
+        if (turn.answered) {
+          turn.answered = false;
+          turn.revision += 1;
+        }
+        // A correction invalidates the speculative retrieval topic too.
+        turn.prefetch = null;
+        turn.prefetchTopic = "";
+      }
 
       if (turn.decideTimer) clearTimeout(turn.decideTimer);
       if (turn.answered) return;
@@ -1593,6 +1638,7 @@ export function useCopilotSession(opts: Options) {
     [
       persistSegment,
       patchDiag,
+      syncMeetingMemory,
       currentTurn,
       newTurn,
       activeTurn,
