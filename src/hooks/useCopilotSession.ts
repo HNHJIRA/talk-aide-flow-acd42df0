@@ -424,6 +424,58 @@ export function useCopilotSession(opts: Options) {
     reopened: 0,
     superseded: 0,
   });
+  /**
+   * MEETING MEMORY — rolling, attributed, bounded. Lives for the whole live
+   * session and feeds the compact context packet on every question. The
+   * asynchronous server sync below never blocks answer generation.
+   */
+  const memory = useRef(new MeetingMemory());
+  const memoryPending = useRef<string[]>([]);
+  const memorySyncing = useRef(false);
+  const [memoryView, setMemoryView] = useState({
+    topic: "—",
+    facts: 0,
+    claims: 0,
+    corrections: 0,
+    turns: 0,
+    summaryUpdatedAt: "never",
+    lastPacket: { turns: 0, facts: 0, claims: 0, subQuestions: 0, corrections: 0 },
+  });
+
+  /** Fire-and-forget rolling summary + fact/claim extraction. Off the hot path. */
+  const syncMeetingMemory = useCallback(
+    (force = false) => {
+      if (memorySyncing.current) return;
+      if (!force && memoryPending.current.length < 4) return;
+      if (!memoryPending.current.length) return;
+      const turns = memoryPending.current.splice(0, memoryPending.current.length);
+      memorySyncing.current = true;
+      void updateMeetingMemory({
+        data: {
+          sessionId,
+          turns,
+          previousSummary: memory.current.rollingSummary,
+        },
+      })
+        .then((res) => {
+          if (res?.updated && res.summary) {
+            memory.current.rollingSummary = res.summary;
+            setMemoryView((prev) => ({
+              ...prev,
+              summaryUpdatedAt: new Date().toLocaleTimeString(),
+            }));
+          }
+        })
+        .catch(() => {
+          /* memory updates are best-effort; the live answer never depends on them */
+        })
+        .finally(() => {
+          memorySyncing.current = false;
+        });
+    },
+    [sessionId],
+  );
+
   /** Turn id -> highest revision that already produced an automatic answer. */
   const answeredTurns = useRef<Map<string, number>>(new Map());
   const [turnView, setTurnView] = useState({
