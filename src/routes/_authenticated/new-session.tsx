@@ -225,6 +225,143 @@ function NewSession() {
           </p>
         </section>
 
+        <section className="panel grid gap-4 p-6">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Meeting prep &amp; knowledge base
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Everything here is compiled into a stable meeting brief before you go live, so the copilot already knows
+              the project and never has to parse anything mid-call. All fields are optional.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="project">Project</Label>
+              <select
+                id="project"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">— new / none —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {!projectId ? (
+                <Input
+                  value={newProject}
+                  onChange={(e) => setNewProject(e.target.value)}
+                  placeholder="New project name (carries memory to later meetings)"
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Summaries from earlier meetings on this project are loaded automatically.
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="meetingTitle">Meeting title</Label>
+              <Input
+                id="meetingTitle"
+                value={prep.meeting_title}
+                onChange={(e) => setPrepField("meeting_title")(e.target.value)}
+                placeholder="Discovery call — SEO growth"
+              />
+              <Label htmlFor="meetingType">Meeting type</Label>
+              <select
+                id="meetingType"
+                value={prep.meeting_type}
+                onChange={(e) => setPrepField("meeting_type")(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {[
+                  ["client_call", "Client call"],
+                  ["job_interview", "Job interview"],
+                  ["discovery", "Discovery / scoping"],
+                  ["status_update", "Status update"],
+                  ["sales", "Sales call"],
+                  ["other", "Other"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="website">Client website</Label>
+              <Input
+                id="website"
+                value={prep.client_website}
+                onChange={(e) => setPrepField("client_website")(e.target.value)}
+                placeholder="https://client.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="stack">Tech stack</Label>
+              <Input
+                id="stack"
+                value={prep.tech_stack}
+                onChange={(e) => setPrepField("tech_stack")(e.target.value)}
+                placeholder="Next.js, Postgres, Vercel"
+              />
+            </div>
+          </div>
+
+          {(
+            [
+              ["project_description", "Project description", "What the project actually is."],
+              ["requirements", "Main requirements", "What must be delivered."],
+              ["goals", "Goals", "What success looks like for the client."],
+              ["challenges", "Problems / challenges", "Known blockers or risks."],
+              ["client_concerns", "Known client concerns", "What they will push back on."],
+              ["important_facts", "Important facts", "Numbers, dates, names you must get right."],
+              ["emphasize", "Things I want to emphasise", "Strengths to steer answers toward."],
+              ["avoid_claims", "Things I should NOT claim", "The copilot will never assert these on your behalf."],
+              ["previous_communication", "Previous communication", "Emails, prior calls, agreed scope."],
+              ["custom_notes", "Custom notes", ""],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <div key={key} className="space-y-1.5">
+              <Label htmlFor={key}>{label}</Label>
+              <Textarea
+                id={key}
+                rows={2}
+                value={prep[key]}
+                onChange={(e) => setPrepField(key)(e.target.value)}
+                placeholder={hint}
+              />
+            </div>
+          ))}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="budget">Budget notes</Label>
+              <Input
+                id="budget"
+                value={prep.budget_notes}
+                onChange={(e) => setPrepField("budget_notes")(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="timeline">Timeline</Label>
+              <Input
+                id="timeline"
+                value={prep.timeline}
+                onChange={(e) => setPrepField("timeline")(e.target.value)}
+              />
+            </div>
+          </div>
+        </section>
+
         <div className="flex justify-end">
           <Button size="lg" onClick={start} disabled={busy}>
             {busy ? "Creating…" : "Continue to live room"}
