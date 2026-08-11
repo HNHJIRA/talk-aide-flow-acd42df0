@@ -111,12 +111,12 @@ export const generateSessionNotes = createServerFn({ method: "POST" })
 
     const { data: session } = await supabase
       .from("interview_sessions")
-      .select("id, target_role, company_name, session_type")
+      .select("id, target_role, company_name, session_type, rolling_summary")
       .eq("id", data.sessionId)
       .maybeSingle();
     if (!session) throw new Error("Session not found.");
 
-    const [{ data: segments }, { data: questions }] = await Promise.all([
+    const [{ data: segments }, { data: questions }, { data: facts }, { data: claims }] = await Promise.all([
       supabase
         .from("transcript_segments")
         .select("speaker, text")
@@ -129,6 +129,19 @@ export const generateSessionNotes = createServerFn({ method: "POST" })
         .select("question_text, category")
         .eq("session_id", data.sessionId)
         .order("created_at", { ascending: true }),
+      supabase
+        .from("meeting_facts")
+        .select("label, value, said_by")
+        .eq("session_id", data.sessionId)
+        .is("superseded_at", null)
+        .order("created_at", { ascending: true })
+        .limit(60),
+      supabase
+        .from("candidate_claims")
+        .select("claim")
+        .eq("session_id", data.sessionId)
+        .order("created_at", { ascending: true })
+        .limit(40),
     ]);
 
     const transcript = (segments ?? [])
@@ -149,12 +162,20 @@ export const generateSessionNotes = createServerFn({ method: "POST" })
         messages: [
           {
             role: "system",
-            content: `Summarize a job interview transcript for the candidate. Base everything strictly on the transcript; invent nothing.
-Return ONLY JSON with string fields: summary, questions_summary, key_topics, strengths, improvement_areas, follow_up_topics, action_items. Use short markdown bullet lists inside each string where it helps.`,
+            content: `Summarize a live meeting/interview for the participant. Base everything strictly on the supplied material; invent nothing.
+Return ONLY JSON with string fields: summary, questions_summary, key_topics, strengths, improvement_areas, follow_up_topics, action_items.
+- summary: what was discussed, client requirements, project scope, technical requirements, budget/timeline mentions and decisions.
+- key_topics: topics + important facts established, attributed to who said them.
+- follow_up_topics: open questions, next steps, and things to remember for the next meeting.
+- action_items: commitments and promises made, with who owns each.
+Use short markdown bullet lists inside each string where it helps.`,
           },
           {
             role: "user",
             content: `Role: ${session.target_role ?? "unspecified"} at ${session.company_name ?? "unspecified company"} (${session.session_type}).
+Rolling meeting memory: ${session.rolling_summary ?? "(none)"}
+Facts established: ${(facts ?? []).map((f) => `${f.said_by}: ${f.label} = ${f.value}`).join(" | ") || "none"}
+Claims made by the participant: ${(claims ?? []).map((c) => c.claim).join(" | ") || "none"}
 Questions asked: ${(questions ?? []).map((q) => `${q.question_text} [${q.category}]`).join(" | ") || "none detected"}
 
 Transcript:
