@@ -7,7 +7,19 @@ import {
   type SttEvent,
   type SttProfile,
 } from "@/lib/stt/stt-connection";
-import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
+import {
+  createSttSession,
+  detectQuestion,
+  prefetchContext,
+  primeLiveContext,
+  updateMeetingMemory,
+} from "@/lib/copilot.functions";
+import {
+  MeetingMemory,
+  buildContextPacket,
+  repairSpeech,
+  type Correction,
+} from "@/lib/conversation-intelligence";
 import {
   TurnTimer,
   EMPTY_WATERFALL,
@@ -338,6 +350,10 @@ export function useCopilotSession(opts: Options) {
     text: string;
     /** Every finalised STT segment that belongs to this logical turn. */
     segments: string[];
+    /** Verbatim assembled text, kept for the audit trail. */
+    raw: string;
+    /** Self-corrections detected inside this turn ("crash" -> "cross-platform"). */
+    corrections: Correction[];
     /** How many times Deepgram Flux told us the turn kept going. */
     resumedCount: number;
     /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
@@ -428,6 +444,8 @@ export function useCopilotSession(opts: Options) {
       status: "listening",
       text: "",
       segments: [],
+      raw: "",
+      corrections: [],
       resumedCount: 0,
       turnIndex: null,
       answered: false,
