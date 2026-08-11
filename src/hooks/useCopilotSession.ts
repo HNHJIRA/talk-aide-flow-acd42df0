@@ -132,6 +132,21 @@ export type DebugInfo = {
   lateContinuations: number;
   turnsReopened: number;
   answersSuperseded: number;
+  /* --- conversation intelligence --- */
+  currentTopic: string;
+  rawTranscript: string;
+  resolvedTranscript: string;
+  correctionsDetected: number;
+  lastCorrection: string;
+  subQuestions: string;
+  meetingTurnsRemembered: number;
+  meetingFactsAvailable: number;
+  candidateClaimsAvailable: number;
+  packetRecentTurns: number;
+  packetMeetingFacts: number;
+  packetCandidateClaims: number;
+  packetSubQuestions: number;
+  rollingSummaryUpdated: string;
 
 
 
@@ -2091,6 +2106,25 @@ export function useCopilotSession(opts: Options) {
       lateContinuations: turnStats.current.lateContinuations,
       turnsReopened: turnStats.current.reopened,
       answersSuperseded: turnStats.current.superseded,
+      currentTopic: memoryView.topic,
+      rawTranscript: (turnRef.current?.raw ?? "").slice(-160),
+      resolvedTranscript: (turnRef.current?.text ?? "").slice(-160),
+      correctionsDetected: memoryView.corrections,
+      lastCorrection: (() => {
+        const last = memory.current.corrections[memory.current.corrections.length - 1];
+        return last ? `"${last.from}" → "${last.to}"` : "none";
+      })(),
+      subQuestions: memoryView.lastPacket.subQuestions
+        ? `${memoryView.lastPacket.subQuestions} (answered together)`
+        : "1",
+      meetingTurnsRemembered: memory.current.turns.length,
+      meetingFactsAvailable: memory.current.facts.length,
+      candidateClaimsAvailable: memory.current.claims.length,
+      packetRecentTurns: memoryView.lastPacket.turns,
+      packetMeetingFacts: memoryView.lastPacket.facts,
+      packetCandidateClaims: memoryView.lastPacket.claims,
+      packetSubQuestions: memoryView.lastPacket.subQuestions,
+      rollingSummaryUpdated: memoryView.summaryUpdatedAt,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
