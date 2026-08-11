@@ -358,6 +358,20 @@ function LiveSession() {
                   ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
                   ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
 
+                  ["— CONVERSATION INTELLIGENCE —", ""],
+                  ["Current topic", debug.currentTopic],
+                  ["Raw transcript (turn)", debug.rawTranscript || "—"],
+                  ["Resolved transcript (turn)", debug.resolvedTranscript || "—"],
+                  ["Corrections detected", String(debug.correctionsDetected)],
+                  ["Last correction", debug.lastCorrection],
+                  ["Sub-questions in turn", debug.subQuestions],
+                  ["Meeting turns remembered", String(debug.meetingTurnsRemembered)],
+                  ["Facts / claims available", `${debug.meetingFactsAvailable} / ${debug.candidateClaimsAvailable}`],
+                  ["Context packet (turns/facts/claims)", `${debug.packetRecentTurns} / ${debug.packetMeetingFacts} / ${debug.packetCandidateClaims}`],
+                  ["Rolling summary updated", debug.rollingSummaryUpdated],
+
+
+
                   ["Companion state", debug.companionState],
 
                   ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
