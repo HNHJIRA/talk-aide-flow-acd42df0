@@ -58,6 +58,57 @@ export type Database = {
           },
         ]
       }
+      candidate_claims: {
+        Row: {
+          claim: string
+          confidence: number
+          created_at: string
+          id: string
+          project_id: string | null
+          said_by: string
+          session_id: string
+          topic: string
+          user_id: string
+        }
+        Insert: {
+          claim: string
+          confidence?: number
+          created_at?: string
+          id?: string
+          project_id?: string | null
+          said_by?: string
+          session_id: string
+          topic: string
+          user_id: string
+        }
+        Update: {
+          claim?: string
+          confidence?: number
+          created_at?: string
+          id?: string
+          project_id?: string | null
+          said_by?: string
+          session_id?: string
+          topic?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "candidate_claims_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "candidate_claims_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "interview_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companion_pairings: {
         Row: {
           approved_at: string | null
@@ -379,6 +430,7 @@ export type Database = {
           job_description: string | null
           language: string
           meeting_platform: string
+          project_id: string | null
           resume_document_id: string | null
           rolling_summary: string | null
           session_type: string
@@ -402,6 +454,7 @@ export type Database = {
           job_description?: string | null
           language?: string
           meeting_platform?: string
+          project_id?: string | null
           resume_document_id?: string | null
           rolling_summary?: string | null
           session_type?: string
@@ -425,6 +478,7 @@ export type Database = {
           job_description?: string | null
           language?: string
           meeting_platform?: string
+          project_id?: string | null
           resume_document_id?: string | null
           rolling_summary?: string | null
           session_type?: string
@@ -437,10 +491,173 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "interview_sessions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "interview_sessions_resume_document_id_fkey"
             columns: ["resume_document_id"]
             isOneToOne: false
             referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_facts: {
+        Row: {
+          confidence: number
+          created_at: string
+          id: string
+          label: string
+          project_id: string | null
+          said_by: string
+          session_id: string
+          superseded_at: string | null
+          user_id: string
+          value: string
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          id?: string
+          label: string
+          project_id?: string | null
+          said_by?: string
+          session_id: string
+          superseded_at?: string | null
+          user_id: string
+          value: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          id?: string
+          label?: string
+          project_id?: string | null
+          said_by?: string
+          session_id?: string
+          superseded_at?: string | null
+          user_id?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_facts_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_facts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "interview_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meeting_preparations: {
+        Row: {
+          avoid_claims: string | null
+          brief: string | null
+          budget_notes: string | null
+          challenges: string | null
+          client_concerns: string | null
+          client_website: string | null
+          company_name: string | null
+          created_at: string
+          custom_notes: string | null
+          emphasize: string | null
+          goals: string | null
+          id: string
+          important_facts: string | null
+          meeting_title: string | null
+          meeting_type: string
+          previous_communication: string | null
+          project_description: string | null
+          project_id: string | null
+          project_name: string | null
+          requirements: string | null
+          role_discussed: string | null
+          session_id: string
+          tech_stack: string | null
+          timeline: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avoid_claims?: string | null
+          brief?: string | null
+          budget_notes?: string | null
+          challenges?: string | null
+          client_concerns?: string | null
+          client_website?: string | null
+          company_name?: string | null
+          created_at?: string
+          custom_notes?: string | null
+          emphasize?: string | null
+          goals?: string | null
+          id?: string
+          important_facts?: string | null
+          meeting_title?: string | null
+          meeting_type?: string
+          previous_communication?: string | null
+          project_description?: string | null
+          project_id?: string | null
+          project_name?: string | null
+          requirements?: string | null
+          role_discussed?: string | null
+          session_id: string
+          tech_stack?: string | null
+          timeline?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avoid_claims?: string | null
+          brief?: string | null
+          budget_notes?: string | null
+          challenges?: string | null
+          client_concerns?: string | null
+          client_website?: string | null
+          company_name?: string | null
+          created_at?: string
+          custom_notes?: string | null
+          emphasize?: string | null
+          goals?: string | null
+          id?: string
+          important_facts?: string | null
+          meeting_title?: string | null
+          meeting_type?: string
+          previous_communication?: string | null
+          project_description?: string | null
+          project_id?: string | null
+          project_name?: string | null
+          requirements?: string | null
+          role_discussed?: string | null
+          session_id?: string
+          tech_stack?: string | null
+          timeline?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meeting_preparations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meeting_preparations_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: true
+            referencedRelation: "interview_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -496,6 +713,42 @@ export type Database = {
           target_role?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          client_name: string | null
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          shared_notes: string | null
+          updated_at: string
+          user_id: string
+          website_url: string | null
+        }
+        Insert: {
+          client_name?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          shared_notes?: string | null
+          updated_at?: string
+          user_id: string
+          website_url?: string | null
+        }
+        Update: {
+          client_name?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          shared_notes?: string | null
+          updated_at?: string
+          user_id?: string
+          website_url?: string | null
         }
         Relationships: []
       }

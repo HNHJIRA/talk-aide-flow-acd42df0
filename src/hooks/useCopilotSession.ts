@@ -7,7 +7,19 @@ import {
   type SttEvent,
   type SttProfile,
 } from "@/lib/stt/stt-connection";
-import { createSttSession, detectQuestion, prefetchContext, primeLiveContext } from "@/lib/copilot.functions";
+import {
+  createSttSession,
+  detectQuestion,
+  prefetchContext,
+  primeLiveContext,
+  updateMeetingMemory,
+} from "@/lib/copilot.functions";
+import {
+  MeetingMemory,
+  buildContextPacket,
+  repairSpeech,
+  type Correction,
+} from "@/lib/conversation-intelligence";
 import {
   TurnTimer,
   EMPTY_WATERFALL,
@@ -120,6 +132,21 @@ export type DebugInfo = {
   lateContinuations: number;
   turnsReopened: number;
   answersSuperseded: number;
+  /* --- conversation intelligence --- */
+  currentTopic: string;
+  rawTranscript: string;
+  resolvedTranscript: string;
+  correctionsDetected: number;
+  lastCorrection: string;
+  subQuestions: string;
+  meetingTurnsRemembered: number;
+  meetingFactsAvailable: number;
+  candidateClaimsAvailable: number;
+  packetRecentTurns: number;
+  packetMeetingFacts: number;
+  packetCandidateClaims: number;
+  packetSubQuestions: number;
+  rollingSummaryUpdated: string;
 
 
 
@@ -338,6 +365,10 @@ export function useCopilotSession(opts: Options) {
     text: string;
     /** Every finalised STT segment that belongs to this logical turn. */
     segments: string[];
+    /** Verbatim assembled text, kept for the audit trail. */
+    raw: string;
+    /** Self-corrections detected inside this turn ("crash" -> "cross-platform"). */
+    corrections: Correction[];
     /** How many times Deepgram Flux told us the turn kept going. */
     resumedCount: number;
     /** Flux turn index this logical turn is bound to (null on the classic pipeline). */
@@ -408,6 +439,58 @@ export function useCopilotSession(opts: Options) {
     reopened: 0,
     superseded: 0,
   });
+  /**
+   * MEETING MEMORY — rolling, attributed, bounded. Lives for the whole live
+   * session and feeds the compact context packet on every question. The
+   * asynchronous server sync below never blocks answer generation.
+   */
+  const memory = useRef(new MeetingMemory());
+  const memoryPending = useRef<string[]>([]);
+  const memorySyncing = useRef(false);
+  const [memoryView, setMemoryView] = useState({
+    topic: "—",
+    facts: 0,
+    claims: 0,
+    corrections: 0,
+    turns: 0,
+    summaryUpdatedAt: "never",
+    lastPacket: { turns: 0, facts: 0, claims: 0, subQuestions: 0, corrections: 0 },
+  });
+
+  /** Fire-and-forget rolling summary + fact/claim extraction. Off the hot path. */
+  const syncMeetingMemory = useCallback(
+    (force = false) => {
+      if (memorySyncing.current) return;
+      if (!force && memoryPending.current.length < 4) return;
+      if (!memoryPending.current.length) return;
+      const turns = memoryPending.current.splice(0, memoryPending.current.length);
+      memorySyncing.current = true;
+      void updateMeetingMemory({
+        data: {
+          sessionId,
+          turns,
+          previousSummary: memory.current.rollingSummary,
+        },
+      })
+        .then((res) => {
+          if (res?.updated && res.summary) {
+            memory.current.rollingSummary = res.summary;
+            setMemoryView((prev) => ({
+              ...prev,
+              summaryUpdatedAt: new Date().toLocaleTimeString(),
+            }));
+          }
+        })
+        .catch(() => {
+          /* memory updates are best-effort; the live answer never depends on them */
+        })
+        .finally(() => {
+          memorySyncing.current = false;
+        });
+    },
+    [sessionId],
+  );
+
   /** Turn id -> highest revision that already produced an automatic answer. */
   const answeredTurns = useRef<Map<string, number>>(new Map());
   const [turnView, setTurnView] = useState({
@@ -428,6 +511,8 @@ export function useCopilotSession(opts: Options) {
       status: "listening",
       text: "",
       segments: [],
+      raw: "",
+      corrections: [],
       resumedCount: 0,
       turnIndex: null,
       answered: false,
@@ -602,6 +687,21 @@ export function useCopilotSession(opts: Options) {
             .join("\n\n")
         : "";
 
+      // LIVE CONTEXT PACKET: small, ranked, attributed. Never the transcript.
+      const packet = buildContextPacket(memory.current, questionText, turn.corrections);
+      if (!speculative)
+        setMemoryView((prev) => ({
+          ...prev,
+          topic: packet.currentTopic || "—",
+          lastPacket: {
+            turns: packet.recentTurns.length,
+            facts: packet.meetingFacts.length,
+            claims: packet.candidateClaims.length,
+            subQuestions: packet.subQuestions.length,
+            corrections: packet.corrections.length,
+          },
+        }));
+
       timer.remark("aiRequestStart");
       let answer = "";
       let firstToken: number | null = null;
@@ -643,6 +743,7 @@ export function useCopilotSession(opts: Options) {
             recentConversation,
             priorQna,
             isFollowUp,
+            packet,
           }),
         });
         timer.mark("aiResponseHeaders");
@@ -760,6 +861,19 @@ export function useCopilotSession(opts: Options) {
         patchDiag({ aiState: "answered" });
         publishWaterfall(timer);
 
+        // Meeting memory: what was asked and what we suggested, so the next
+        // follow-up does not repeat it.
+        memory.current.recordAnswer(questionText, answer);
+        memoryPending.current.push(`COPILOT SUGGESTED: ${answer.slice(0, 400)}`);
+        setMemoryView((prev) => ({
+          ...prev,
+          facts: memory.current.facts.length,
+          claims: memory.current.claims.length,
+          corrections: memory.current.corrections.length,
+          turns: memory.current.turns.length,
+        }));
+        syncMeetingMemory();
+
         // Persistence happens strictly after the answer is on screen.
         void (async () => {
           const dbId = await questionRowIds.current.get(turn.id);
@@ -810,7 +924,7 @@ export function useCopilotSession(opts: Options) {
       }
     },
 
-    [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall],
+    [sessionId, pushError, patchDiag, scheduleFlush, publishWaterfall, syncMeetingMemory],
   );
 
   /**
@@ -1438,6 +1552,18 @@ export function useCopilotSession(opts: Options) {
         if (turnRef.current && !turnRef.current.segmentId) turnRef.current.segmentId = id ?? null;
       });
 
+      // Every finalised segment enters meeting memory with its attribution:
+      // client facts and candidate claims are never mixed.
+      memory.current.addTurn(
+        speaker === "interviewer" ? "interviewer" : speaker === "test" ? "test" : "candidate",
+        result.text,
+      );
+      memoryPending.current.push(
+        `${speaker === "interviewer" ? "CLIENT" : speaker === "test" ? "TEST" : "ME"}: ${result.text}`,
+      );
+      if (memoryPending.current.length > 60) memoryPending.current = memoryPending.current.slice(-60);
+      syncMeetingMemory();
+
       if (!drivesDetection) return;
 
       const turn = activeTurn(result.text);
@@ -1452,7 +1578,40 @@ export function useCopilotSession(opts: Options) {
       // Stage C silence deadline.
       turn.segments.push(result.text.trim());
       if (turn.segments.length > 1) turnStats.current.merged += 1;
-      turn.text = turn.segments.join(" ").trim().slice(-600);
+      turn.raw = turn.segments.join(" ").trim().slice(-800);
+
+      // SPEECH REPAIR: the assembled turn is re-resolved on every segment, so a
+      // correction arriving in a later segment rewrites the meaning of the whole
+      // turn instead of producing a second, unrelated question.
+      const repaired = repairSpeech(turn.raw);
+      const hadCorrections = turn.corrections.length;
+      turn.corrections = repaired.corrections;
+      turn.text = repaired.resolved.slice(-600);
+      if (repaired.corrections.length > hadCorrections) {
+        memory.current.recordCorrections(repaired.corrections.slice(hadCorrections));
+        setMemoryView((prev) => ({ ...prev, corrections: memory.current.corrections.length }));
+        // Anything already generated was based on the retracted wording: throw it
+        // away and bump the revision so stale tokens can never paint.
+        if (turn.spec && !turn.spec.promoted) {
+          turnStats.current.specAborted += 1;
+          turn.spec.aborted = true;
+          turn.spec.controller.abort();
+          turn.spec = null;
+          turn.timer.speculativeCancelled = true;
+        }
+        if (turn.answerController) {
+          turn.answerController.abort();
+          turn.answerController = null;
+          turnStats.current.superseded += 1;
+        }
+        if (turn.answered) {
+          turn.answered = false;
+          turn.revision += 1;
+        }
+        // A correction invalidates the speculative retrieval topic too.
+        turn.prefetch = null;
+        turn.prefetchTopic = "";
+      }
 
       if (turn.decideTimer) clearTimeout(turn.decideTimer);
       if (turn.answered) return;
@@ -1494,6 +1653,7 @@ export function useCopilotSession(opts: Options) {
     [
       persistSegment,
       patchDiag,
+      syncMeetingMemory,
       currentTurn,
       newTurn,
       activeTurn,
@@ -1783,6 +1943,9 @@ export function useCopilotSession(opts: Options) {
 
   const endSession = useCallback(async () => {
     setSessionState("ending");
+    // Flush whatever meeting memory has not been folded into the summary yet,
+    // so the end-of-meeting notes see the whole call.
+    syncMeetingMemory(true);
     const duration = startedAt.current ? Math.round((Date.now() - startedAt.current) / 1000) : 0;
     teardown();
     await supabase
@@ -1795,7 +1958,7 @@ export function useCopilotSession(opts: Options) {
       .eq("id", sessionId);
     setSessionState("completed");
     return duration;
-  }, [teardown, sessionId]);
+  }, [teardown, sessionId, syncMeetingMemory]);
 
   const stopGenerating = useCallback(() => abortRef.current?.abort(), []);
 
@@ -1946,6 +2109,25 @@ export function useCopilotSession(opts: Options) {
       lateContinuations: turnStats.current.lateContinuations,
       turnsReopened: turnStats.current.reopened,
       answersSuperseded: turnStats.current.superseded,
+      currentTopic: memoryView.topic,
+      rawTranscript: (turnRef.current?.raw ?? "").slice(-160),
+      resolvedTranscript: (turnRef.current?.text ?? "").slice(-160),
+      correctionsDetected: memoryView.corrections,
+      lastCorrection: (() => {
+        const last = memory.current.corrections[memory.current.corrections.length - 1];
+        return last ? `"${last.from}" → "${last.to}"` : "none";
+      })(),
+      subQuestions: memoryView.lastPacket.subQuestions
+        ? `${memoryView.lastPacket.subQuestions} (answered together)`
+        : "1",
+      meetingTurnsRemembered: memory.current.turns.length,
+      meetingFactsAvailable: memory.current.facts.length,
+      candidateClaimsAvailable: memory.current.claims.length,
+      packetRecentTurns: memoryView.lastPacket.turns,
+      packetMeetingFacts: memoryView.lastPacket.facts,
+      packetCandidateClaims: memoryView.lastPacket.claims,
+      packetSubQuestions: memoryView.lastPacket.subQuestions,
+      rollingSummaryUpdated: memoryView.summaryUpdatedAt,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
@@ -1989,6 +2171,7 @@ export function useCopilotSession(opts: Options) {
       sttProfile,
       turnView,
       turnSilenceMs,
+      memoryView,
     ],
   );
 

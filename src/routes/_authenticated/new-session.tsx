@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MacDownloadButton } from "@/components/download/MacDownloadButton";
+import { listProjects, saveMeetingPrep, upsertProject } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,35 @@ function NewSession() {
   const [jobDescription, setJobDescription] = useState("");
   const [busy, setBusy] = useState(false);
 
+  /* ---- meeting prep knowledge base ---- */
+  const [projectId, setProjectId] = useState<string>("");
+  const [newProject, setNewProject] = useState("");
+  const [prep, setPrep] = useState({
+    meeting_title: "",
+    meeting_type: "client_call",
+    client_website: "",
+    project_description: "",
+    requirements: "",
+    goals: "",
+    challenges: "",
+    tech_stack: "",
+    budget_notes: "",
+    timeline: "",
+    client_concerns: "",
+    important_facts: "",
+    emphasize: "",
+    avoid_claims: "",
+    previous_communication: "",
+    custom_notes: "",
+  });
+  const setPrepField = (key: keyof typeof prep) => (value: string) =>
+    setPrep((prev) => ({ ...prev, [key]: value }));
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => listProjects(),
+  });
+
   const caps = detectCapabilities();
 
   const { data: resume } = useQuery({
@@ -66,6 +96,14 @@ function NewSession() {
     try {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) throw new Error("Not signed in.");
+      let linkedProject = projectId || null;
+      if (!linkedProject && newProject.trim()) {
+        const created = await upsertProject({
+          data: { name: newProject.trim(), ...(company ? { clientName: company } : {}) },
+        });
+        linkedProject = created?.id ?? null;
+      }
+
       const { data, error } = await supabase
         .from("interview_sessions")
         .insert({
@@ -75,12 +113,32 @@ function NewSession() {
           company_name: company || null,
           job_description: jobDescription || null,
           meeting_platform: platform,
+          project_id: linkedProject,
           resume_document_id: resume?.id ?? null,
           status: "active",
         })
         .select("id")
         .single();
       if (error) throw error;
+
+      // The knowledge base is compiled BEFORE Go Live so nothing is parsed
+      // during the meeting itself.
+      await saveMeetingPrep({
+        data: {
+          sessionId: data.id,
+          projectId: linkedProject,
+          prep: {
+            ...prep,
+            meeting_title: prep.meeting_title || (role ? `${role}${company ? ` @ ${company}` : ""}` : ""),
+            company_name: company,
+            project_name: newProject.trim() || projects.find((p) => p.id === projectId)?.name || "",
+            role_discussed: role,
+          },
+        },
+      }).catch(() => {
+        /* prep is optional — never block going live */
+      });
+
       void navigate({ to: "/session/$sessionId", params: { sessionId: data.id } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start session");
@@ -165,6 +223,143 @@ function NewSession() {
               <span className="text-warning">no primary resume — answers will stay generic</span>
             )}
           </p>
+        </section>
+
+        <section className="panel grid gap-4 p-6">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Meeting prep &amp; knowledge base
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Everything here is compiled into a stable meeting brief before you go live, so the copilot already knows
+              the project and never has to parse anything mid-call. All fields are optional.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="project">Project</Label>
+              <select
+                id="project"
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">— new / none —</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              {!projectId ? (
+                <Input
+                  value={newProject}
+                  onChange={(e) => setNewProject(e.target.value)}
+                  placeholder="New project name (carries memory to later meetings)"
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Summaries from earlier meetings on this project are loaded automatically.
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="meetingTitle">Meeting title</Label>
+              <Input
+                id="meetingTitle"
+                value={prep.meeting_title}
+                onChange={(e) => setPrepField("meeting_title")(e.target.value)}
+                placeholder="Discovery call — SEO growth"
+              />
+              <Label htmlFor="meetingType">Meeting type</Label>
+              <select
+                id="meetingType"
+                value={prep.meeting_type}
+                onChange={(e) => setPrepField("meeting_type")(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {[
+                  ["client_call", "Client call"],
+                  ["job_interview", "Job interview"],
+                  ["discovery", "Discovery / scoping"],
+                  ["status_update", "Status update"],
+                  ["sales", "Sales call"],
+                  ["other", "Other"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="website">Client website</Label>
+              <Input
+                id="website"
+                value={prep.client_website}
+                onChange={(e) => setPrepField("client_website")(e.target.value)}
+                placeholder="https://client.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="stack">Tech stack</Label>
+              <Input
+                id="stack"
+                value={prep.tech_stack}
+                onChange={(e) => setPrepField("tech_stack")(e.target.value)}
+                placeholder="Next.js, Postgres, Vercel"
+              />
+            </div>
+          </div>
+
+          {(
+            [
+              ["project_description", "Project description", "What the project actually is."],
+              ["requirements", "Main requirements", "What must be delivered."],
+              ["goals", "Goals", "What success looks like for the client."],
+              ["challenges", "Problems / challenges", "Known blockers or risks."],
+              ["client_concerns", "Known client concerns", "What they will push back on."],
+              ["important_facts", "Important facts", "Numbers, dates, names you must get right."],
+              ["emphasize", "Things I want to emphasise", "Strengths to steer answers toward."],
+              ["avoid_claims", "Things I should NOT claim", "The copilot will never assert these on your behalf."],
+              ["previous_communication", "Previous communication", "Emails, prior calls, agreed scope."],
+              ["custom_notes", "Custom notes", ""],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <div key={key} className="space-y-1.5">
+              <Label htmlFor={key}>{label}</Label>
+              <Textarea
+                id={key}
+                rows={2}
+                value={prep[key]}
+                onChange={(e) => setPrepField(key)(e.target.value)}
+                placeholder={hint}
+              />
+            </div>
+          ))}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="budget">Budget notes</Label>
+              <Input
+                id="budget"
+                value={prep.budget_notes}
+                onChange={(e) => setPrepField("budget_notes")(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="timeline">Timeline</Label>
+              <Input
+                id="timeline"
+                value={prep.timeline}
+                onChange={(e) => setPrepField("timeline")(e.target.value)}
+              />
+            </div>
+          </div>
         </section>
 
         <div className="flex justify-end">
