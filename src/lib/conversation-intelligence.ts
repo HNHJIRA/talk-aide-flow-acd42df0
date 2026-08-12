@@ -79,6 +79,60 @@ const NON_CORRECTION_TAIL =
  * term) and keeps everything else verbatim. It never rewrites meaning, only
  * removes the retracted fragment.
  */
+/* ------------------------------------------------------------
+ * 1a. TECHNICAL TERM NORMALISATION
+ * Speech-to-text mangles tech vocabulary in predictable ways. These are
+ * high-confidence, context-free rewrites only — anything ambiguous
+ * (next/nest, view/Vue) is left alone for the model to infer.
+ * ------------------------------------------------------------ */
+
+const TECH_FIXES: [RegExp, string][] = [
+  [/\btensor\s?(?:flow|float)\b/gi, "TensorFlow"],
+  [/\b(?:pie|pi|py)\s?torch\b/gi, "PyTorch"],
+  [/\bpsychic[- ]?learn\b/gi, "scikit-learn"],
+  [/\bsci\s?kit\s?learn\b/gi, "scikit-learn"],
+  [/\bnode\s?js\b/gi, "Node.js"],
+  [/\bnext\s?js\b/gi, "Next.js"],
+  [/\bnest\s?js\b/gi, "NestJS"],
+  [/\bcuber\s?netes\b|\bkuber\s?netes\b/gi, "Kubernetes"],
+  [/\bcube\s?(?:control|cuttle|cut)\b/gi, "kubectl"],
+  [/\bpost\s?(?:grass|gres|gray?s)(?:ql)?\b/gi, "PostgreSQL"],
+  [/\bno\s?sequel\b/gi, "NoSQL"],
+  [/\bmy\s?sequel\b/gi, "MySQL"],
+  [/\bsequel\s?(?:server)\b/gi, "SQL Server"],
+  [/\bgraph\s?q\s?l\b/gi, "GraphQL"],
+  [/\brest\s?full\b/gi, "RESTful"],
+  [/\byam+el\b|\byam+l\b/gi, "YAML"],
+  [/\bjason\s?(?:file|payload|response|object|format)\b/gi, "JSON"],
+  [/\bc\s?i\s?[\/ ]?c\s?d\b|\bcd\s?cd\b/gi, "CI/CD"],
+  [/\bl\s?l\s?m(s)?\b/gi, "LLM$1"],
+  [/\be\s?c\s?2\b/gi, "EC2"],
+  [/\bs\s+3\b/gi, "S3"],
+  [/\bdynamo\s?db\b/gi, "DynamoDB"],
+  [/\bmongo\s?db\b/gi, "MongoDB"],
+  [/\bred\s?is\b/gi, "Redis"],
+  [/\bgit\s?hub\b/gi, "GitHub"],
+  [/\bdocker\s?file\b/gi, "Dockerfile"],
+  [/\btype\s?script\b/gi, "TypeScript"],
+  [/\bjava\s?script\b/gi, "JavaScript"],
+  [/\breact\s?native\b/gi, "React Native"],
+  [/\bweb\s?socket(s)?\b/gi, "WebSocket$1"],
+  [/\bo\s?auth\b/gi, "OAuth"],
+  [/\bj\s?w\s?t\b/gi, "JWT"],
+  [/\bs\s?d\s?k\b/gi, "SDK"],
+  [/\bter+a\s?form\b/gi, "Terraform"],
+  [/\bsupa\s?base\b/gi, "Supabase"],
+  [/\bfire\s?base\b/gi, "Firebase"],
+  [/\btail\s?wind\b/gi, "Tailwind"],
+];
+
+/** Normalise predictable STT mistakes in technical vocabulary. */
+export function correctTechnicalTerms(text: string): string {
+  let out = text;
+  for (const [re, to] of TECH_FIXES) out = out.replace(re, to);
+  return squash(out);
+}
+
 export function repairSpeech(rawText: string): RepairResult {
   const raw = squash(rawText);
   if (!raw) return { raw, resolved: "", corrections: [] };
@@ -92,6 +146,7 @@ export function repairSpeech(rawText: string): RepairResult {
     corrections.push({ from: notMatch[1]!, to: notMatch[2]!, marker: "not X, Y" });
     resolved = squash(resolved.replace(NOT_X_Y, notMatch[2]!));
   }
+
 
   // Pass 2: marker-driven repairs, left to right.
   for (let guard = 0; guard < 4; guard++) {
