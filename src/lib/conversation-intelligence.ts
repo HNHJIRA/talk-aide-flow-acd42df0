@@ -189,7 +189,7 @@ export function repairSpeech(rawText: string): RepairResult {
     resolved = squash(`${kept.join(" ")} ${after}`);
   }
 
-  return { raw, resolved: resolved || raw, corrections };
+  return { raw, resolved: correctTechnicalTerms(resolved || raw), corrections };
 }
 
 /* ============================================================
