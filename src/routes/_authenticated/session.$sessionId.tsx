@@ -250,7 +250,7 @@ function LiveSession() {
                   {segment.speaker === "interviewer"
                     ? "Interviewer"
                     : segment.speaker === "test"
-                      ? "Test audio"
+                      ? "Helper"
                       : "You"}
                 </span>
                 <span className="text-foreground/90">{segment.text}</span>
@@ -353,7 +353,7 @@ function LiveSession() {
               ["Deepgram (microphone)", debug.localStt],
               ["Deepgram (interviewer)", debug.remoteStt],
               ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
-              ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
+              ["Session mode", sttTestMode ? "HELPER MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
               ["Microphone role", debug.micRole],
               ["Detection sources", debug.detectionSources],
               ["STT profile (interviewer)", debug.sttProfile],
@@ -539,7 +539,7 @@ function LiveSession() {
             }
             statusLabel={
               micStatus === "active"
-                ? `Connected · ${sttTestMode ? "Test audio" : "Candidate"}`
+                ? `Connected · ${sttTestMode ? "Helper" : "Candidate"}`
                 : micStatus === "connecting"
                   ? "Connecting…"
                   : micStatus === "error"
@@ -589,13 +589,13 @@ function LiveSession() {
             </div>
           ) : null}
 
-          {/* STT test toggle */}
+          {/* Helper toggle */}
           <div
             className="flex shrink-0 items-center gap-2 rounded-xl border border-border/70 bg-card/50 px-3 py-2"
-            title="Testing only — allows microphone speech to trigger interviewer answers."
+            title="Helper mode — microphone speech is treated as interviewer input so you can validate the pipeline without a meeting."
           >
             <label htmlFor="stt-test-mode" className="text-[11px] font-medium text-muted-foreground">
-              STT Test
+              Helper
             </label>
             <Switch id="stt-test-mode" checked={sttTestMode} onCheckedChange={setSttTestMode} />
           </div>
