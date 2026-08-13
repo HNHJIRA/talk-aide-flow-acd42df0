@@ -1392,7 +1392,7 @@ export function useCopilotSession(opts: Options) {
     ) => {
       const isRemote = source !== "microphone";
       const mode = optsRef.current.micMode;
-      // Only an interviewer-side stream drives the low-latency machine; STT Test Mode
+      // Only an interviewer-side stream drives the low-latency machine; Helper mode
       // and opt-in mic-only fallback are the two explicit exceptions.
       const drivesDetection =
         optsRef.current.autoDetect &&
@@ -1676,7 +1676,7 @@ export function useCopilotSession(opts: Options) {
       const isRemote = source !== "microphone";
       const setState = isRemote ? setRemoteStt : setLocalStt;
       // Low-latency pipeline for interviewer audio; the candidate microphone keeps
-      // the standard pipeline (and gets it too in STT Test Mode, which stands in
+      // the standard pipeline (and gets it too in Helper mode, which stands in
       // for the interviewer).
       const lowLatency = isRemote || optsRef.current.micMode === "test";
       const connection = new SttConnection({
