@@ -106,6 +106,36 @@ function DownloadPage() {
           </ol>
         </section>
 
+        <section className="panel mt-6 p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            &ldquo;Apple could not verify this app&rdquo;
+          </h2>
+          <p className="mt-3 text-sm text-muted-foreground">
+            This build is not notarised by Apple yet, so macOS blocks the first launch. It is expected and the app is
+            safe. Click <strong className="text-foreground">Done</strong> (never Move to Bin), then use either method:
+          </p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-sm font-medium">Method 1 — System Settings</p>
+              <ol className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+                <li>1. Open System Settings → Privacy &amp; Security.</li>
+                <li>2. Scroll to Security; find the blocked app message.</li>
+                <li>
+                  3. Click <strong className="text-foreground">Open Anyway</strong> and confirm with Touch ID or your
+                  password.
+                </li>
+              </ol>
+            </div>
+            <div>
+              <p className="text-sm font-medium">Method 2 — Terminal (one command)</p>
+              <p className="mt-2 text-sm text-muted-foreground">Removes the quarantine flag, then open the app:</p>
+              <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-muted/40 p-3 text-xs">
+{`xattr -dr com.apple.quarantine "/Applications/InterviewCopilot Companion.app"`}
+              </pre>
+            </div>
+          </div>
+        </section>
+
         <p className="mt-6 text-xs text-muted-foreground">
           The companion contains no API keys. It connects to your session with a short-lived, session-scoped pairing
           token only.
