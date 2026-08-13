@@ -245,7 +245,7 @@ fn main() {
                     let prefs = gs_prefs.clone();
                     let action = action.to_string();
                     if let Err(err) = gs.on_shortcut(accel, move |app, _shortcut, event| {
-                        if event.state() != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
                             return;
                         }
                         match action.as_str() {
