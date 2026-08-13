@@ -627,13 +627,13 @@ function LiveSession() {
               </Button>
             )}
             <Button
-              variant={sessionState === "idle" ? "ghost" : "outline"}
+              variant="outline"
               onClick={() => void finish()}
-              disabled={sessionState === "idle"}
-              className={cn(sessionState !== "idle" && "border-destructive/40 text-destructive hover:bg-destructive/10")}
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
             >
               <Square className="size-4" /> End
             </Button>
+
           </div>
         </div>
       </div>
