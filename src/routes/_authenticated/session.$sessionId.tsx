@@ -163,6 +163,28 @@ function LiveSession() {
   const live = sessionState === "listening";
   const activeQuestion = useMemo(() => questions[0], [questions]);
 
+  /* Private overlay: a thin, read-only publisher on top of the existing session. */
+  const overlay = useOverlayPublisher({
+    sessionId,
+    sessionTitle: session?.title ?? "Interview session",
+    live,
+    paused: sessionState === "paused",
+    generating: questions.some((q) => q.status === "generating"),
+    elapsed,
+    source:
+      isZoomDesktop && !forceTabFallback
+        ? "Zoom Desktop"
+        : meetingStatus === "active"
+          ? "Meeting tab"
+          : sttTestMode
+            ? "Helper (mic)"
+            : "Microphone",
+    micLabel: micStatus === "active" ? (sttTestMode ? "Helper" : "Candidate") : "Mic off",
+    questions,
+  });
+
+
+
   const finish = async () => {
     await endSession();
     toast.success("Session saved");
