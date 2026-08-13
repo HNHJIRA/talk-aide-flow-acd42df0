@@ -136,7 +136,7 @@ function LiveSession() {
 
 
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
+    transcriptRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [segments, interim]);
 
   const live = sessionState === "listening";
@@ -412,7 +412,15 @@ function LiveSession() {
               Live transcript
             </h2>
             <div ref={transcriptRef} className="min-h-[240px] flex-1 space-y-3 overflow-y-auto pr-2">
-              {segments.map((segment) => (
+              {interim.remote_meeting || interim.zoom_desktop ? (
+                <p className="text-sm italic text-muted-foreground">
+                  {interim.remote_meeting || interim.zoom_desktop}
+                </p>
+              ) : null}
+              {interim.microphone ? (
+                <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
+              ) : null}
+              {[...segments].reverse().map((segment) => (
                 <p key={segment.id} className="text-sm">
                   <span
                     className={cn(
@@ -433,15 +441,6 @@ function LiveSession() {
                   <span className="text-foreground/90">{segment.text}</span>
                 </p>
               ))}
-              {interim.remote_meeting || interim.zoom_desktop ? (
-                <p className="text-sm italic text-muted-foreground">
-                  {interim.remote_meeting || interim.zoom_desktop}
-                </p>
-
-              ) : null}
-              {interim.microphone ? (
-                <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
-              ) : null}
               {segments.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Connect your sources and go live — speech appears here in real time.
