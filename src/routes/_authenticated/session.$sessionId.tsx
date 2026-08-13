@@ -136,7 +136,7 @@ function LiveSession() {
 
 
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
+    transcriptRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [segments, interim]);
 
   const live = sessionState === "listening";
