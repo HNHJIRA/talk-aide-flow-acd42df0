@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>InterviewCopilot Overlay</title>
+    <link rel="stylesheet" href="overlay.css" />
+  </head>
+  <body class="mode-mini" data-fields="both">
+    <!-- Bubble mode: tiny launcher -->
+    <button id="bubble" class="bubble" type="button" data-tauri-drag-region>
+      <span class="bubble-dot" id="bubbleDot"></span>
+      <span class="bubble-label">IC</span>
+    </button>
+
+    <!-- Mini / focus panel -->
+    <section class="panel" id="panel">
+      <header class="bar" data-tauri-drag-region>
+        <span class="brand" data-tauri-drag-region>
+          <span class="dot" id="liveDot"></span>
+          InterviewCopilot
+        </span>
+        <span class="meta" id="meta" data-tauri-drag-region></span>
+        <span class="bar-actions">
+          <button type="button" id="btnBubble" title="Minimise to bubble">–</button>
+          <button type="button" id="btnCycle" title="Cycle size">▣</button>
+          <button type="button" id="btnHide" title="Hide overlay">✕</button>
+        </span>
+      </header>
+
+      <div class="body" id="body">
+        <div class="block" id="questionBlock">
+          <p class="label">Question</p>
+          <p class="question" id="question">Waiting for the interviewer…</p>
+        </div>
+        <div class="block" id="answerBlock">
+          <p class="label">
+            Answer <span class="phase" id="phase"></span>
+          </p>
+          <p class="answer" id="answer">—</p>
+        </div>
+      </div>
+
+      <footer class="foot">
+        <span class="nav">
+          <button type="button" id="btnPrev" title="Previous answer">‹</button>
+          <span id="counter">0 / 0</span>
+          <button type="button" id="btnNext" title="Next answer">›</button>
+        </span>
+        <span class="source" id="source"></span>
+        <span class="timer" id="timer">00:00</span>
+      </footer>
+    </section>
+
+    <script src="overlay.js"></script>
+  </body>
+</html>
