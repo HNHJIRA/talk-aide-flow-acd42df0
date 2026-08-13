@@ -635,15 +635,6 @@ function LiveSession() {
             >
               <Square className="size-4" /> End
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => setShowDebug((v) => !v)}
-              aria-pressed={showDebug}
-            >
-              <Bug className="size-4" /> Diagnostics
-            </Button>
           </div>
         </div>
       </div>
