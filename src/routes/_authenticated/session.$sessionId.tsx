@@ -441,15 +441,6 @@ function LiveSession() {
                   <span className="text-foreground/90">{segment.text}</span>
                 </p>
               ))}
-              {interim.remote_meeting || interim.zoom_desktop ? (
-                <p className="text-sm italic text-muted-foreground">
-                  {interim.remote_meeting || interim.zoom_desktop}
-                </p>
-
-              ) : null}
-              {interim.microphone ? (
-                <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
-              ) : null}
               {segments.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   Connect your sources and go live — speech appears here in real time.
