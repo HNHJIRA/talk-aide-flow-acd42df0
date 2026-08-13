@@ -197,6 +197,9 @@ pub struct AppState {
     inner: RwLock<Inner>,
     pub counters: Counters,
     pub tx: broadcast::Sender<OutMsg>,
+    /// Overlay control/update frames received from the authenticated browser,
+    /// forwarded to the native overlay window by the main thread.
+    pub overlay_tx: broadcast::Sender<serde_json::Value>,
     /// Set by whichever component owns the running capture thread.
     pub capture_stop: RwLock<Option<Arc<std::sync::atomic::AtomicBool>>>,
     pub capture_paused: Arc<std::sync::atomic::AtomicBool>,
@@ -207,6 +210,7 @@ pub type Shared = Arc<AppState>;
 impl AppState {
     pub fn new(port: u16) -> Shared {
         let (tx, _rx) = broadcast::channel(256);
+        let (overlay_tx, _orx) = broadcast::channel(128);
         Arc::new(AppState {
             inner: RwLock::new(Inner {
                 state: CaptureState::Idle,
@@ -226,10 +230,17 @@ impl AppState {
             }),
             counters: Counters::default(),
             tx,
+            overlay_tx,
             capture_stop: RwLock::new(None),
             capture_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
+
+    /// Send an arbitrary JSON frame to the authenticated browser socket.
+    pub fn send_to_browser(&self, value: serde_json::Value) {
+        let _ = self.tx.send(OutMsg::Text(value.to_string()));
+    }
+
 
     pub fn read(&self) -> parking_lot::RwLockReadGuard<'_, Inner> {
         self.inner.read()
