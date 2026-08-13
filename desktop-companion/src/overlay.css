@@ -1,0 +1,249 @@
+/* Private Overlay — dark, minimal, glanceable. Deliberately compact:
+   it sits on top of a live meeting, so nothing here competes for attention. */
+
+:root {
+  --bg: rgba(14, 16, 20, 0.86);
+  --bg-strong: rgba(18, 21, 26, 0.94);
+  --border: rgba(255, 255, 255, 0.09);
+  --fg: #eef1f6;
+  --muted: rgba(238, 241, 246, 0.55);
+  --accent: #7cc9ff;
+  --live: #37d67a;
+  --warn: #ffc46b;
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  font-size: 13px;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+body {
+  padding: 6px;
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+/* ---------- bubble ---------- */
+
+.bubble {
+  display: none;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-strong);
+  color: var(--fg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(18px);
+}
+
+.bubble-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.bubble-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+body.live .bubble-dot,
+body.live .dot {
+  background: var(--live);
+  box-shadow: 0 0 0 3px rgba(55, 214, 122, 0.16);
+}
+
+/* ---------- panel ---------- */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  backdrop-filter: blur(22px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.meta {
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.bar-actions button,
+.nav button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bar-actions button:hover,
+.nav button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+}
+
+.label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.phase {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.question {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.answer {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgba(238, 241, 246, 0.92);
+  white-space: pre-wrap;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.source {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timer {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- modes ---------- */
+
+body.mode-bubble .panel {
+  display: none;
+}
+
+body.mode-bubble .bubble {
+  display: flex;
+}
+
+body.mode-mini .question {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+body.mode-mini .answer {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+body[data-fields="question"] #answerBlock,
+body[data-fields="answer"] #questionBlock {
+  display: none;
+}
