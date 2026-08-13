@@ -51,6 +51,7 @@ export function CompanionPanel({
   onStartCapture,
   onStopCapture,
   onFallback,
+  embedded = false,
 }: {
   sessionId: string;
   health: CompanionHealth | null;
@@ -61,7 +62,9 @@ export function CompanionPanel({
   onStartCapture: () => void;
   onStopCapture: () => void;
   onFallback: () => void;
+  embedded?: boolean;
 }) {
+
   const [code, setCode] = useState<string | null>(null);
   const [pairingId, setPairingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
