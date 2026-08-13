@@ -117,23 +117,27 @@ export function CompanionPanel({
   const paired = capturing || state === "connected" || state === "ready" || state === "requesting_permission";
 
   return (
-    <div className="rounded-lg border border-border p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <Laptop className="size-4 text-primary" /> Zoom Desktop (companion)
-          </p>
-          <div className="mt-1.5">
-            <StatusDot label={LABEL[state]} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : ""} />
+    <div className={embedded ? "" : "rounded-lg border border-border p-3"}>
+      {embedded ? null : (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <Laptop className="size-4 text-primary" /> Zoom Desktop (companion)
+            </p>
+            <div className="mt-1.5">
+              <StatusDot label={LABEL[state]} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : ""} />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <AudioLevelMeter level={level} label="Zoom Desktop" />
+            <Button size="icon" variant="ghost" onClick={() => void onRefresh()} aria-label="Re-check companion">
+              <RefreshCw className="size-4" />
+            </Button>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <AudioLevelMeter level={level} label="Zoom Desktop" />
-          <Button size="icon" variant="ghost" onClick={() => void onRefresh()} aria-label="Re-check companion">
-            <RefreshCw className="size-4" />
-          </Button>
-        </div>
-      </div>
+      )}
+
+
 
       {code ? (
         <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
