@@ -209,7 +209,7 @@ type Options = {
   /**
    * How microphone speech is treated.
    * - "candidate" (production dual-source): mic = CANDIDATE, never triggers detection.
-   * - "test" (STT Test Mode): mic = TEST AUDIO, may trigger detection for validation.
+   * - "test" (Helper mode): mic = HELPER, may trigger detection for validation.
    * - "fallback": mic-only user; detection only when fallbackAutoDetect is on or promoted manually.
    */
   micMode: MicMode;
@@ -672,7 +672,7 @@ export function useCopilotSession(opts: Options) {
         .slice(-6)
         .map(
           (s) =>
-            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
+            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "HELPER" : "CANDIDATE"}: ${s.text}`,
         )
         .join("\n")
         .slice(-500);
@@ -1244,7 +1244,7 @@ export function useCopilotSession(opts: Options) {
         .slice(-8)
         .map(
           (s) =>
-            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "TEST AUDIO" : "CANDIDATE"}: ${s.text}`,
+            `${s.speaker === "interviewer" ? "INTERVIEWER" : s.speaker === "test" ? "HELPER" : "CANDIDATE"}: ${s.text}`,
         )
         .join("\n");
       let result;
@@ -1528,8 +1528,8 @@ export function useCopilotSession(opts: Options) {
       patchDiag({
         lastTranscriptSource: isRemote
           ? `${source} (INTERVIEWER)`
-          : speaker === "test"
-            ? "microphone (TEST AUDIO / single source)"
+            : speaker === "test"
+            ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
       });
       if (isRemote) counts.current.remote += 1;
@@ -2068,7 +2068,7 @@ export function useCopilotSession(opts: Options) {
       micMode: opts.micMode,
       micRole:
         opts.micMode === "test"
-          ? "TEST AUDIO (single source)"
+          ? "HELPER (single source)"
           : opts.micMode === "fallback"
             ? "CANDIDATE (mic-only fallback)"
             : "CANDIDATE (ME)",
