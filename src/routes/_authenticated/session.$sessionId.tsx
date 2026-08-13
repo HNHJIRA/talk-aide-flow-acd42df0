@@ -72,7 +72,7 @@ function LiveSession() {
   const { sessionId } = Route.useParams();
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug] = useState(false);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
