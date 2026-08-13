@@ -109,7 +109,9 @@ export function OverlayControl({
         ) : pairingCode ? (
           <div className="rounded-md border border-primary/40 bg-primary/5 p-3">
             <p className="text-muted-foreground">Enter this code in the companion app:</p>
-            <p className="mt-1 font-mono text-2xl tracking-[0.3em] text-foreground">{pairingCode}</p>
+            <p className="mt-1 font-mono text-2xl tracking-[0.3em] text-foreground">
+              {pairingCode}
+            </p>
             <p className="mt-1 text-[11px] text-muted-foreground">Waiting for approval…</p>
           </div>
         ) : !connected ? (

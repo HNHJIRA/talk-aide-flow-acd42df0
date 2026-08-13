@@ -74,7 +74,10 @@ export function useOverlayPublisher(input: OverlayInput) {
         if (next.alwaysOnTop != null) l.setAlwaysOnTop(next.alwaysOnTop);
         if (next.hideFromCapture != null) l.setHideFromCapture(next.hideFromCapture);
         if (next.show) l.setShow(next.show);
-        if (next.enabled != null) (next.enabled ? l.show() : l.hide());
+        if (next.enabled != null) {
+          if (next.enabled) l.show();
+          else l.hide();
+        }
       }
       return merged;
     });
