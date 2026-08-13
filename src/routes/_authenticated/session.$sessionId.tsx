@@ -23,6 +23,8 @@ import { StatusDot } from "@/components/copilot/StatusIndicators";
 import { DockSource } from "@/components/copilot/DockSource";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CompanionPanel } from "@/components/copilot/CompanionPanel";
+import { OverlayControl } from "@/components/copilot/OverlayControl";
+import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
 
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
 import { sttDiagnostics } from "@/lib/copilot.functions";
