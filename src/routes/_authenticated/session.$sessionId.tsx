@@ -208,470 +208,445 @@ function LiveSession() {
         </div>
       ) : null}
 
-      <div className="grid flex-1 gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        {/* ---------- left: setup + transcript ---------- */}
-        <section className="flex min-h-0 flex-col gap-4">
-          <div className="panel p-5">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold tracking-tight">Audio sources</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Choose the sources InterviewCopilot should listen to during this session.
-                </p>
-              </div>
-              <span
-                className={cn(
-                  "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-                  live
-                    ? "border-success/40 bg-success/10 text-success"
-                    : "border-border text-muted-foreground",
-                )}
-              >
-                {live ? "Live" : sessionState === "paused" ? "Paused" : "Not live"}
-              </span>
-            </div>
-
-            {isZoomDesktop ? (
-              <div className="mt-4">
-                <p className="text-[11px] font-medium text-muted-foreground">Meeting source</p>
-                <div
-                  role="tablist"
-                  aria-label="Meeting source"
-                  className="mt-1.5 inline-flex rounded-lg border border-border bg-muted/40 p-0.5"
-                >
-                  {[
-                    { key: "zoom", label: "Zoom Desktop", icon: Laptop },
-                    { key: "tab", label: "Browser tab", icon: MonitorSpeaker },
-                  ].map((option) => {
-                    const selected = option.key === "tab" ? forceTabFallback : !forceTabFallback;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={selected}
-                        onClick={() => setForceTabFallback(option.key === "tab")}
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-[7px] px-3 py-1.5 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          selected
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        <option.icon className="size-3.5" /> {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-4 grid items-stretch gap-3 lg:grid-cols-2">
-              {/* ---------- interviewer source ---------- */}
-              {isZoomDesktop && !forceTabFallback ? (
-                <SourceCard
-                  icon={Laptop}
-                  title="Zoom Desktop"
-                  state={
-                    companionState === "capturing"
-                      ? "connected"
-                      : companionState === "silent"
-                        ? "warning"
-                        : companionState === "error"
-                          ? "error"
-                          : companionState === "pairing" ||
-                              companionState === "reconnecting" ||
-                              companionState === "requesting_permission"
-                            ? "connecting"
-                            : "disconnected"
-                  }
-                  statusLabel={COMPANION_STATUS[companionState] ?? "Not connected"}
-                  description={
-                    companionHealth
-                      ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
-                      : "Native companion captures interviewer audio straight from the Zoom Desktop app."
-                  }
-                  level={meetingLevel}
-                  meterLabel="Zoom Desktop"
-                >
-                  <CompanionPanel
-                    embedded
-                    sessionId={sessionId}
-                    health={companionHealth}
-                    state={companionState}
-                    level={meetingLevel}
-                    onRefresh={refreshCompanion}
-                    onConnect={(token) => connectCompanion(token, "zoom")}
-                    onStartCapture={startCompanionCapture}
-                    onStopCapture={stopCompanionCapture}
-                    onFallback={() => setForceTabFallback(true)}
-                  />
-                </SourceCard>
-              ) : (
-                <SourceCard
-                  icon={MonitorSpeaker}
-                  title="Meeting audio"
-                  state={
-                    meetingStatus === "active"
-                      ? "connected"
-                      : meetingStatus === "connecting"
-                        ? "connecting"
-                        : meetingStatus === "silent"
-                          ? "warning"
-                          : meetingStatus === "error"
-                            ? "error"
-                            : "disconnected"
-                  }
-                  statusLabel={
-                    meetingStatus === "active"
-                      ? "Connected · Interviewer"
-                      : meetingStatus === "connecting"
-                        ? "Connecting…"
-                        : meetingStatus === "silent"
-                          ? "No audio detected"
-                          : meetingStatus === "error"
-                            ? "Capture failed"
-                            : "Not connected"
-                  }
-                  description={
-                    meetingStatus === "active"
-                      ? "Receiving interviewer audio from the shared browser tab."
-                      : "Capture interviewer audio from a shared browser tab — tick “Also share tab audio”."
-                  }
-                  level={meetingLevel}
-                  meterLabel="Meeting"
-                  action={
-                    <Button
-                      size="sm"
-                      variant={meetingStatus === "active" ? "outline" : "default"}
-                      onClick={() => void connectMeetingAudio()}
-                      disabled={!caps.hasGetDisplayMedia}
-                    >
-                      {meetingStatus === "active" ? "Reconnect" : "Connect"}
-                    </Button>
-                  }
-                  footerNote={!caps.hasGetDisplayMedia ? "This browser can't share tab audio." : null}
-                />
-              )}
-
-              {/* ---------- candidate microphone ---------- */}
-              <SourceCard
-                icon={Mic}
-                tone="accent"
-                title="Your microphone"
-                state={
-                  micStatus === "active"
-                    ? "connected"
-                    : micStatus === "connecting"
-                      ? "connecting"
-                      : micStatus === "silent"
-                        ? "warning"
-                        : micStatus === "error"
-                          ? "error"
-                          : "disconnected"
-                }
-                statusLabel={
-                  micStatus === "active"
-                    ? `Connected · ${sttTestMode ? "Test audio" : "Candidate voice"}`
-                    : micStatus === "connecting"
-                      ? "Connecting…"
-                      : micStatus === "error"
-                        ? "Microphone blocked"
-                        : "Not connected"
-                }
-                description={
-                  micDeviceLabel
-                    ? micDeviceLabel
-                    : "Used only for your side of the conversation."
-                }
-                level={micLevel}
-                meterLabel="Microphone"
-                action={
-                  <Button
-                    size="sm"
-                    variant={micStatus === "active" ? "outline" : "default"}
-                    onClick={() => void connectMicrophone()}
-                  >
-                    {micStatus === "active" ? "Reconnect" : "Connect"}
-                  </Button>
-                }
-              />
-            </div>
-
-            <div className="mt-4 rounded-xl border border-border/70 bg-card/40 p-3">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                <label htmlFor="stt-test-mode" className="min-w-0 text-sm font-medium">
-                  STT Test Mode
-                </label>
-                <Switch id="stt-test-mode" checked={sttTestMode} onCheckedChange={setSttTestMode} />
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {sttTestMode
-                  ? "Testing only — microphone speech can trigger interviewer answers."
-                  : "Production mode — microphone remains Candidate-only."}
-              </p>
-            </div>
-
-            {!sttTestMode && micOnlyFallback ? (
-              <div className="mt-3 flex gap-2.5 rounded-xl border border-warning/30 bg-warning/[0.07] p-3 text-xs">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-                <div className="min-w-0">
-                  <p className="text-foreground/90">
-                    Microphone-only fallback: every utterance comes from one device, so speaker attribution can't be
-                    assumed.
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <Button size="sm" variant="outline" onClick={() => void promoteLastMicSegment()}>
-                      Treat last transcript as question
-                    </Button>
-                    <label className="flex items-center gap-2 text-muted-foreground">
-                      <Switch checked={fallbackAutoDetect} onCheckedChange={setFallbackAutoDetect} />
-                      <span>Single-source auto-detection</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {needsMeetingAudio && meetingStatus !== "active" ? (
-              <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/[0.07] p-3 text-xs text-foreground/90">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-                <p>Without meeting audio only your own speech is transcribed — questions won't be detected.</p>
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border/70 pt-4">
-              {!live ? (
-                <Button onClick={() => void (sessionState === "paused" ? resume() : startListening())} disabled={!canStart}>
-                  <Play className="size-4" /> {sessionState === "paused" ? "Resume" : "Go live"}
-                </Button>
-              ) : (
-                <Button variant="outline" onClick={pause}>
-                  <Pause className="size-4" /> Pause
-                </Button>
-              )}
-              <Button
-                variant={sessionState === "idle" ? "ghost" : "destructive"}
-                onClick={() => void finish()}
-                disabled={sessionState === "idle"}
-              >
-                <Square className="size-4" /> End session
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto text-muted-foreground"
-                onClick={() => setShowDebug((v) => !v)}
-                aria-pressed={showDebug}
-              >
-                <Bug className="size-4" /> Diagnostics
-              </Button>
-            </div>
-
-
-            {showDebug ? (
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed">
-                {[
-                  ["Mic level", `${Math.round(micLevel * 100)}%`],
-                  ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
-                  ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],
-                  ["Meeting track", `${debug.meetingTrack} · ${debug.meetingTrackLabel}`],
-                  ["Tracks returned by browser", debug.meetingTracksReturned],
-                  ["Deepgram (microphone)", debug.localStt],
-                  ["Deepgram (interviewer)", debug.remoteStt],
-                  ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
-                  ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
-                  ["Microphone role", debug.micRole],
-                  ["Detection sources", debug.detectionSources],
-                  ["STT profile (interviewer)", debug.sttProfile],
-                  ["Turn state", debug.turnStatus],
-                  ["Interviewer turn id", debug.turnId],
-                  ["Segments in current turn", String(debug.turnSegments)],
-                  ["Assembled turn text", debug.turnAssembled || "—"],
-                  ["Continuation guard", debug.lastContinuationReason],
-                  ["Turn revision", `r${debug.turnRevision}`],
-                  ["Current turn silence", `${debug.turnSilenceMs} ms`],
-                  ["Turn stage", debug.turnStage],
-                  ["Hard commits (silence deadline)", String(debug.hardCommits)],
-                  ["Late-continuation window", debug.lateWindowState],
-                  ["Late continuations detected", String(debug.lateContinuations)],
-                  ["Turns reopened / answers superseded", `${debug.turnsReopened} / ${debug.answersSuperseded}`],
-                  ["Segments merged / turns resumed", `${debug.segmentsMerged} / ${debug.turnsResumed}`],
-                  ["Grace-window holds", String(debug.graceHolds)],
-                  ["Duplicate answers blocked", String(debug.duplicateAnswersBlocked)],
-                  ["Speculative started / reused / aborted", `${debug.specStarted} / ${debug.specReused} / ${debug.specAborted}`],
-                  ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
-                  ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
-
-                  ["— CONVERSATION INTELLIGENCE —", ""],
-                  ["Current topic", debug.currentTopic],
-                  ["Raw transcript (turn)", debug.rawTranscript || "—"],
-                  ["Resolved transcript (turn)", debug.resolvedTranscript || "—"],
-                  ["Corrections detected", String(debug.correctionsDetected)],
-                  ["Last correction", debug.lastCorrection],
-                  ["Sub-questions in turn", debug.subQuestions],
-                  ["Meeting turns remembered", String(debug.meetingTurnsRemembered)],
-                  ["Facts / claims available", `${debug.meetingFactsAvailable} / ${debug.candidateClaimsAvailable}`],
-                  ["Context packet (turns/facts/claims)", `${debug.packetRecentTurns} / ${debug.packetMeetingFacts} / ${debug.packetCandidateClaims}`],
-                  ["Rolling summary updated", debug.rollingSummaryUpdated],
-
-
-
-                  ["Companion state", debug.companionState],
-
-                  ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
-                  ["Companion capture backend", debug.companionBackend],
-                  ["Interviewer capture method", debug.remoteCaptureMethod],
-                  ["Interviewer source detected", debug.remoteSourceDetected],
-                  ["Capture format", `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`],
-                  ["Echo/duplicate segments dropped", String(debug.echoSuppressed)],
-                  ["Last capture error", debug.lastCaptureError],
-                  ["Current transcript source", debug.lastTranscriptSource],
-                  ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
-                  ["Last detected question", debug.lastQuestion || "—"],
-                  ["Question confidence", debug.lastConfidence == null ? "—" : debug.lastConfidence.toFixed(2)],
-                  ["AI generation state", debug.aiState],
-                  ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
-                  ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
-
-                ].map(([label, value]) => (
-                  <div key={label} className="contents">
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd className="truncate font-mono text-foreground/90" title={String(value)}>
-                      {String(value)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            ) : null}
-
-            {showDebug ? (
-              <LatencyWaterfallPanel latency={latency} history={latencyHistory} aiCall={aiCall} />
-            ) : null}
-
-          </div>
-
-
-          <div className="panel flex min-h-0 flex-1 flex-col p-5">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* ---------- main: transcript | questions ---------- */}
+      <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        {/* ---------- left: transcript ---------- */}
+        <section className="panel order-2 flex min-h-0 flex-col p-5 lg:order-1">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               Live transcript
             </h2>
-            <div ref={transcriptRef} className="min-h-[240px] flex-1 space-y-3 overflow-y-auto pr-2">
-              {interim.remote_meeting || interim.zoom_desktop ? (
-                <p className="text-sm italic text-muted-foreground">
-                  {interim.remote_meeting || interim.zoom_desktop}
-                </p>
-              ) : null}
-              {interim.microphone ? (
-                <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
-              ) : null}
-              {[...segments].reverse().map((segment) => (
-                <p key={segment.id} className="text-sm">
-                  <span
-                    className={cn(
-                      "mr-2 text-[11px] font-semibold uppercase tracking-wide",
-                      segment.speaker === "interviewer"
-                        ? "text-primary"
-                        : segment.speaker === "test"
-                          ? "text-warning"
-                          : "text-accent",
-                    )}
-                  >
-                    {segment.speaker === "interviewer"
-                      ? "Interviewer"
-                      : segment.speaker === "test"
-                        ? "Test audio"
-                        : "You"}
-                  </span>
-                  <span className="text-foreground/90">{segment.text}</span>
-                </p>
-              ))}
-              {segments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Connect your sources and go live — speech appears here in real time.
-                </p>
-              ) : null}
-            </div>
-
-            <form
-              className="mt-3 flex gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (!manual.trim()) return;
-                void manualQuestion(manual.trim());
-                setManual("");
-              }}
+            <span
+              className={cn(
+                "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                live ? "border-success/40 bg-success/10 text-success" : "border-border text-muted-foreground",
+              )}
             >
-              <Input
-                value={manual}
-                onChange={(event) => setManual(event.target.value)}
-                placeholder="Type a question to answer manually…"
-              />
-              <Button type="submit" size="icon" variant="outline">
-                <Send className="size-4" />
-              </Button>
-            </form>
+              {live ? "Live" : sessionState === "paused" ? "Paused" : "Idle"}
+            </span>
           </div>
+          <div ref={transcriptRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
+            {interim.remote_meeting || interim.zoom_desktop ? (
+              <p className="text-sm italic text-muted-foreground">
+                {interim.remote_meeting || interim.zoom_desktop}
+              </p>
+            ) : null}
+            {interim.microphone ? (
+              <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
+            ) : null}
+            {[...segments].reverse().map((segment) => (
+              <p key={segment.id} className="text-sm">
+                <span
+                  className={cn(
+                    "mr-2 text-[11px] font-semibold uppercase tracking-wide",
+                    segment.speaker === "interviewer"
+                      ? "text-primary"
+                      : segment.speaker === "test"
+                        ? "text-warning"
+                        : "text-accent",
+                  )}
+                >
+                  {segment.speaker === "interviewer"
+                    ? "Interviewer"
+                    : segment.speaker === "test"
+                      ? "Test audio"
+                      : "You"}
+                </span>
+                <span className="text-foreground/90">{segment.text}</span>
+              </p>
+            ))}
+            {segments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Connect your sources and go live — speech appears here in real time.
+              </p>
+            ) : null}
+          </div>
+
+          <form
+            className="mt-3 flex gap-2 border-t border-border/70 pt-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!manual.trim()) return;
+              void manualQuestion(manual.trim());
+              setManual("");
+            }}
+          >
+            <Input
+              value={manual}
+              onChange={(event) => setManual(event.target.value)}
+              placeholder="Type a question to answer manually…"
+            />
+            <Button type="submit" size="icon" variant="outline">
+              <Send className="size-4" />
+            </Button>
+          </form>
         </section>
 
         {/* ---------- right: answers ---------- */}
-        <section className="flex min-h-0 flex-col gap-4">
-          <div className="panel flex min-h-0 flex-1 flex-col p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Detected questions
-              </h2>
-              {activeQuestion?.status === "generating" ? (
-                <Button size="sm" variant="ghost" onClick={stopGenerating}>
-                  <StopCircle className="size-4" /> Stop
-                </Button>
-              ) : null}
-            </div>
+        <section className="panel order-1 flex min-h-0 flex-col p-5 lg:order-2">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Detected questions
+            </h2>
+            {activeQuestion?.status === "generating" ? (
+              <Button size="sm" variant="ghost" onClick={stopGenerating}>
+                <StopCircle className="size-4" /> Stop
+              </Button>
+            ) : null}
+          </div>
 
-            <div className="min-h-[320px] flex-1 space-y-4 overflow-y-auto pr-2">
-              {questions.map((question, index) => (
-                <article
-                  key={question.id}
-                  className={cn(
-                    "rounded-xl border border-border p-4",
-                    index === 0 && "border-primary/50 bg-primary/[0.04]",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-medium">{question.text}</p>
-                    <div className="flex shrink-0 gap-1">
-                      <Button size="icon" variant="ghost" onClick={() => void togglePin(question.id)}>
-                        <Pin className={cn("size-4", question.pinned && "fill-primary text-primary")} />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => void regenerate(question.id)}>
-                        <RefreshCw className="size-4" />
-                      </Button>
-                    </div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
+            {questions.map((question, index) => (
+              <article
+                key={question.id}
+                className={cn(
+                  "rounded-xl border border-border p-4",
+                  index === 0 && "border-primary/50 bg-primary/[0.04]",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-medium">{question.text}</p>
+                  <div className="flex shrink-0 gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => void togglePin(question.id)}>
+                      <Pin className={cn("size-4", question.pinned && "fill-primary text-primary")} />
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => void regenerate(question.id)}>
+                      <RefreshCw className="size-4" />
+                    </Button>
                   </div>
-                  <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                    {question.category}
-                    {question.firstTokenMs ? ` · first token ${question.firstTokenMs}ms` : ""}
-                  </p>
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-                    {question.answer}
-                    {question.status === "generating" ? (
-                      <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-primary align-middle" />
-                    ) : null}
-                  </p>
-                  {question.status === "error" ? (
-                    <p className="mt-2 text-xs text-destructive">Answer failed — try regenerating.</p>
-                  ) : null}
-                </article>
-              ))}
-              {questions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  When the interviewer asks something, it shows up here with an answer streaming in.
+                </div>
+                <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  {question.category}
+                  {question.firstTokenMs ? ` · first token ${question.firstTokenMs}ms` : ""}
                 </p>
-              ) : null}
-            </div>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                  {question.answer}
+                  {question.status === "generating" ? (
+                    <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-primary align-middle" />
+                  ) : null}
+                </p>
+                {question.status === "error" ? (
+                  <p className="mt-2 text-xs text-destructive">Answer failed — try regenerating.</p>
+                ) : null}
+              </article>
+            ))}
+            {questions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                When the interviewer asks something, it shows up here with an answer streaming in.
+              </p>
+            ) : null}
           </div>
         </section>
       </div>
+
+      {/* ---------- diagnostics drawer ---------- */}
+      {showDebug ? (
+        <div className="max-h-[42vh] overflow-y-auto border-t border-border bg-card/60 px-4 py-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed md:grid-cols-4">
+            {[
+              ["Mic level", `${Math.round(micLevel * 100)}%`],
+              ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
+              ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],
+              ["Meeting track", `${debug.meetingTrack} · ${debug.meetingTrackLabel}`],
+              ["Tracks returned by browser", debug.meetingTracksReturned],
+              ["Deepgram (microphone)", debug.localStt],
+              ["Deepgram (interviewer)", debug.remoteStt],
+              ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
+              ["Session mode", sttTestMode ? "STT TEST MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
+              ["Microphone role", debug.micRole],
+              ["Detection sources", debug.detectionSources],
+              ["STT profile (interviewer)", debug.sttProfile],
+              ["Turn state", debug.turnStatus],
+              ["Interviewer turn id", debug.turnId],
+              ["Segments in current turn", String(debug.turnSegments)],
+              ["Assembled turn text", debug.turnAssembled || "—"],
+              ["Continuation guard", debug.lastContinuationReason],
+              ["Turn revision", `r${debug.turnRevision}`],
+              ["Current turn silence", `${debug.turnSilenceMs} ms`],
+              ["Turn stage", debug.turnStage],
+              ["Hard commits (silence deadline)", String(debug.hardCommits)],
+              ["Late-continuation window", debug.lateWindowState],
+              ["Late continuations detected", String(debug.lateContinuations)],
+              ["Turns reopened / answers superseded", `${debug.turnsReopened} / ${debug.answersSuperseded}`],
+              ["Segments merged / turns resumed", `${debug.segmentsMerged} / ${debug.turnsResumed}`],
+              ["Grace-window holds", String(debug.graceHolds)],
+              ["Duplicate answers blocked", String(debug.duplicateAnswersBlocked)],
+              ["Speculative started / reused / aborted", `${debug.specStarted} / ${debug.specReused} / ${debug.specAborted}`],
+              ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
+              ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
+
+              ["— CONVERSATION INTELLIGENCE —", ""],
+              ["Current topic", debug.currentTopic],
+              ["Raw transcript (turn)", debug.rawTranscript || "—"],
+              ["Resolved transcript (turn)", debug.resolvedTranscript || "—"],
+              ["Corrections detected", String(debug.correctionsDetected)],
+              ["Last correction", debug.lastCorrection],
+              ["Sub-questions in turn", debug.subQuestions],
+              ["Meeting turns remembered", String(debug.meetingTurnsRemembered)],
+              ["Facts / claims available", `${debug.meetingFactsAvailable} / ${debug.candidateClaimsAvailable}`],
+              ["Context packet (turns/facts/claims)", `${debug.packetRecentTurns} / ${debug.packetMeetingFacts} / ${debug.packetCandidateClaims}`],
+              ["Rolling summary updated", debug.rollingSummaryUpdated],
+
+              ["Companion state", debug.companionState],
+              ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
+              ["Companion capture backend", debug.companionBackend],
+              ["Interviewer capture method", debug.remoteCaptureMethod],
+              ["Interviewer source detected", debug.remoteSourceDetected],
+              ["Capture format", `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`],
+              ["Echo/duplicate segments dropped", String(debug.echoSuppressed)],
+              ["Last capture error", debug.lastCaptureError],
+              ["Current transcript source", debug.lastTranscriptSource],
+              ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
+              ["Last detected question", debug.lastQuestion || "—"],
+              ["Question confidence", debug.lastConfidence == null ? "—" : debug.lastConfidence.toFixed(2)],
+              ["AI generation state", debug.aiState],
+              ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
+              ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
+            ].map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="truncate font-mono text-foreground/90" title={String(value)}>
+                  {String(value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <LatencyWaterfallPanel latency={latency} history={latencyHistory} aiCall={aiCall} />
+        </div>
+      ) : null}
+
+      {/* ---------- bottom meeting control dock ---------- */}
+      <div className="sticky bottom-0 z-20 border-t border-border bg-background/85 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* interviewer source */}
+          {isZoomDesktop && !forceTabFallback ? (
+            <DockSource
+              icon={Laptop}
+              title="Zoom Desktop"
+              state={
+                companionState === "capturing"
+                  ? "connected"
+                  : companionState === "silent"
+                    ? "warning"
+                    : companionState === "error"
+                      ? "error"
+                      : companionState === "pairing" ||
+                          companionState === "reconnecting" ||
+                          companionState === "requesting_permission"
+                        ? "connecting"
+                        : "disconnected"
+              }
+              statusLabel={COMPANION_STATUS[companionState] ?? "Not connected"}
+              meta={companionHealth ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}` : null}
+              level={meetingLevel}
+              action={
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      Companion
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="end" className="w-[340px]">
+                    <CompanionPanel
+                      embedded
+                      sessionId={sessionId}
+                      health={companionHealth}
+                      state={companionState}
+                      level={meetingLevel}
+                      onRefresh={refreshCompanion}
+                      onConnect={(token) => connectCompanion(token, "zoom")}
+                      onStartCapture={startCompanionCapture}
+                      onStopCapture={stopCompanionCapture}
+                      onFallback={() => setForceTabFallback(true)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              }
+            />
+          ) : (
+            <DockSource
+              icon={MonitorSpeaker}
+              title="Meeting audio"
+              state={
+                meetingStatus === "active"
+                  ? "connected"
+                  : meetingStatus === "connecting"
+                    ? "connecting"
+                    : meetingStatus === "silent"
+                      ? "warning"
+                      : meetingStatus === "error"
+                        ? "error"
+                        : "disconnected"
+              }
+              statusLabel={
+                meetingStatus === "active"
+                  ? "Connected · Interviewer"
+                  : meetingStatus === "connecting"
+                    ? "Connecting…"
+                    : meetingStatus === "silent"
+                      ? "No audio detected"
+                      : meetingStatus === "error"
+                        ? "Capture failed"
+                        : "Not connected"
+              }
+              level={meetingLevel}
+              meta={!caps.hasGetDisplayMedia ? "This browser can't share tab audio." : null}
+              action={
+                <Button
+                  size="sm"
+                  variant={meetingStatus === "active" ? "outline" : "default"}
+                  onClick={() => void connectMeetingAudio()}
+                  disabled={!caps.hasGetDisplayMedia}
+                >
+                  {meetingStatus === "active" ? "Reconnect" : "Connect"}
+                </Button>
+              }
+            />
+          )}
+
+          {needsMeetingAudio && meetingStatus !== "active" && !(isZoomDesktop && !forceTabFallback) ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] font-medium text-warning transition-colors duration-200 hover:bg-warning/15"
+                >
+                  <TriangleAlert className="size-3.5" /> Meeting audio required
+                </button>
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="w-[280px] text-xs">
+                Without meeting audio only your own speech is transcribed — interviewer questions won't be detected.
+              </PopoverContent>
+            </Popover>
+          ) : null}
+
+          {/* microphone */}
+          <DockSource
+            icon={Mic}
+            tone="accent"
+            title="Your microphone"
+            state={
+              micStatus === "active"
+                ? "connected"
+                : micStatus === "connecting"
+                  ? "connecting"
+                  : micStatus === "silent"
+                    ? "warning"
+                    : micStatus === "error"
+                      ? "error"
+                      : "disconnected"
+            }
+            statusLabel={
+              micStatus === "active"
+                ? `Connected · ${sttTestMode ? "Test audio" : "Candidate"}`
+                : micStatus === "connecting"
+                  ? "Connecting…"
+                  : micStatus === "error"
+                    ? "Microphone blocked"
+                    : "Not connected"
+            }
+            meta={micDeviceLabel || null}
+            level={micLevel}
+            action={
+              <Button
+                size="sm"
+                variant={micStatus === "active" ? "outline" : "default"}
+                onClick={() => void connectMicrophone()}
+              >
+                {micStatus === "active" ? "Reconnect" : "Connect"}
+              </Button>
+            }
+          />
+
+          {isZoomDesktop ? (
+            <div
+              role="tablist"
+              aria-label="Meeting source"
+              className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5"
+            >
+              {[
+                { key: "zoom", label: "Zoom", icon: Laptop },
+                { key: "tab", label: "Tab", icon: MonitorSpeaker },
+              ].map((option) => {
+                const selected = option.key === "tab" ? forceTabFallback : !forceTabFallback;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => setForceTabFallback(option.key === "tab")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200",
+                      selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <option.icon className="size-3.5" /> {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {/* STT test toggle */}
+          <div
+            className="flex shrink-0 items-center gap-2 rounded-xl border border-border/70 bg-card/50 px-3 py-2"
+            title="Testing only — allows microphone speech to trigger interviewer answers."
+          >
+            <label htmlFor="stt-test-mode" className="text-[11px] font-medium text-muted-foreground">
+              STT Test
+            </label>
+            <Switch id="stt-test-mode" checked={sttTestMode} onCheckedChange={setSttTestMode} />
+          </div>
+
+          {!sttTestMode && micOnlyFallback ? (
+            <div className="flex shrink-0 items-center gap-2 rounded-xl border border-warning/30 bg-warning/[0.07] px-3 py-2">
+              <Button size="sm" variant="outline" onClick={() => void promoteLastMicSegment()}>
+                Promote to question
+              </Button>
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <Switch checked={fallbackAutoDetect} onCheckedChange={setFallbackAutoDetect} />
+                <span>Auto-detect</span>
+              </label>
+            </div>
+          ) : null}
+
+          {/* primary actions */}
+          <div className="ml-auto flex items-center gap-2">
+            {!live ? (
+              <Button
+                onClick={() => void (sessionState === "paused" ? resume() : startListening())}
+                disabled={!canStart}
+                className="px-5"
+              >
+                <Play className="size-4" /> {sessionState === "paused" ? "Resume" : "Go live"}
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={pause}>
+                <Pause className="size-4" /> Pause
+              </Button>
+            )}
+            <Button
+              variant={sessionState === "idle" ? "ghost" : "outline"}
+              onClick={() => void finish()}
+              disabled={sessionState === "idle"}
+              className={cn(sessionState !== "idle" && "border-destructive/40 text-destructive hover:bg-destructive/10")}
+            >
+              <Square className="size-4" /> End
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => setShowDebug((v) => !v)}
+              aria-pressed={showDebug}
+            >
+              <Bug className="size-4" /> Diagnostics
+            </Button>
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }
