@@ -9,6 +9,7 @@
 mod audio;
 mod bridge;
 mod logging;
+mod overlay;
 mod platform;
 mod security;
 mod state;
@@ -21,6 +22,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State as TauriState};
 
 use state::{AppState, CaptureState, CaptureTarget, Pairing, Shared};
+
+use overlay::SharedPrefs;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,12 +144,44 @@ fn export_diagnostics(app_state: TauriState<'_, Shared>) -> String {
     serde_json::to_string_pretty(&app_state.diagnostics()).unwrap_or_else(|_| "{}".into())
 }
 
+/* ---------------- overlay window commands (called by overlay.html) ---------------- */
+
+#[tauri::command]
+fn overlay_set_mode(mode: String, app: AppHandle, prefs: TauriState<'_, SharedPrefs>) {
+    overlay::handle_message(
+        &app,
+        prefs.inner(),
+        &serde_json::json!({ "type": "overlay_mode", "mode": mode }),
+    );
+}
+
+#[tauri::command]
+fn overlay_hide(app: AppHandle, prefs: TauriState<'_, SharedPrefs>) {
+    overlay::handle_message(&app, prefs.inner(), &serde_json::json!({ "type": "overlay_hide" }));
+}
+
+/// Navigation buttons: the web app owns the question list, so we ask it.
+#[tauri::command]
+fn overlay_command(action: String, app: AppHandle) {
+    overlay::request_from_browser(&app, &action);
+}
+
+#[tauri::command]
+fn overlay_capabilities(prefs: TauriState<'_, SharedPrefs>) -> serde_json::Value {
+    let hide = prefs.read().hide_from_capture;
+    serde_json::to_value(overlay::capabilities(hide)).unwrap_or_else(|_| serde_json::json!({}))
+}
+
 fn main() {
     let shared = AppState::new(bridge::CANDIDATE_PORTS[0]);
+    let overlay_prefs: SharedPrefs =
+        std::sync::Arc::new(parking_lot::RwLock::new(overlay::OverlayPrefs::default()));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(shared.clone())
+        .manage(overlay_prefs.clone())
         .setup(move |app| {
             let log_dir = app
                 .path()
@@ -177,6 +212,53 @@ fn main() {
                     let _ = handle.emit("companion://status", ui_state.snapshot());
                 }
             });
+
+            // Private Overlay: forward browser frames to the native overlay window.
+            let overlay_state = shared.clone();
+            let overlay_handle: AppHandle = app.handle().clone();
+            let overlay_prefs_task = overlay_prefs.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut rx = overlay_state.overlay_tx.subscribe();
+                loop {
+                    match rx.recv().await {
+                        Ok(msg) => overlay::handle_message(&overlay_handle, &overlay_prefs_task, &msg),
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => break,
+                    }
+                }
+            });
+
+            // Global shortcuts. Registration failures are non-fatal: the overlay
+            // is still controllable from the web app and the tray.
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                let gs_prefs = overlay_prefs.clone();
+                let gs = app.global_shortcut();
+                let bindings: [(&str, &str); 5] = [
+                    ("CmdOrCtrl+Shift+O", "toggle"),
+                    ("CmdOrCtrl+Shift+S", "cycle"),
+                    ("CmdOrCtrl+Shift+H", "minimise"),
+                    ("CmdOrCtrl+Shift+Period", "next"),
+                    ("CmdOrCtrl+Shift+Comma", "prev"),
+                ];
+                for (accel, action) in bindings {
+                    let prefs = gs_prefs.clone();
+                    let action = action.to_string();
+                    if let Err(err) = gs.on_shortcut(accel, move |app, _shortcut, event| {
+                        if event.state() != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                            return;
+                        }
+                        match action.as_str() {
+                            "toggle" => overlay::toggle_visibility(app, &prefs),
+                            "cycle" => overlay::cycle_mode(app, &prefs),
+                            "minimise" => overlay::minimise_to_bubble(app, &prefs),
+                            other => overlay::request_from_browser(app, other),
+                        }
+                    }) {
+                        tracing::warn!(accel, error = %err, "global shortcut unavailable");
+                    }
+                }
+            }
 
             // Tray: capture status is always visible, never hidden.
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
@@ -216,7 +298,11 @@ fn main() {
             start_capture_cmd,
             stop_capture_cmd,
             set_paused,
-            export_diagnostics
+            export_diagnostics,
+            overlay_set_mode,
+            overlay_hide,
+            overlay_command,
+            overlay_capabilities
         ])
         .run(tauri::generate_context!())
         .expect("error while running InterviewCopilot Companion");
