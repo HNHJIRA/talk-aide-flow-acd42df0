@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import {
   Mic,
   MonitorSpeaker,
+  Laptop,
+  TriangleAlert,
   Pause,
   Play,
   Square,
@@ -17,7 +19,9 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AudioLevelMeter, StatusDot } from "@/components/copilot/StatusIndicators";
+import { Switch } from "@/components/ui/switch";
+import { StatusDot } from "@/components/copilot/StatusIndicators";
+import { SourceCard } from "@/components/copilot/SourceCard";
 import { CompanionPanel } from "@/components/copilot/CompanionPanel";
 
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
@@ -26,6 +30,21 @@ import { detectCapabilities } from "@/lib/audio/capability";
 import { formatDuration, PLATFORM_LABELS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { LatencyWaterfallPanel } from "@/components/copilot/LatencyWaterfall";
+
+const COMPANION_STATUS: Record<string, string> = {
+  not_installed: "Companion not detected",
+  disconnected: "Not connected",
+  pairing: "Pairing…",
+  connected: "Paired — ready to capture",
+  requesting_permission: "Waiting for OS audio permission",
+  ready: "Ready",
+  capturing: "Connected · Interviewer",
+  silent: "Paired — no Zoom audio",
+  reconnecting: "Reconnecting…",
+  error: "Companion error",
+  stopped: "Stopped",
+};
+
 
 export const Route = createFileRoute("/_authenticated/session/$sessionId")({
   head: () => ({
