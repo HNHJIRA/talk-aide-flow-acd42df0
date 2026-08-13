@@ -412,7 +412,15 @@ function LiveSession() {
               Live transcript
             </h2>
             <div ref={transcriptRef} className="min-h-[240px] flex-1 space-y-3 overflow-y-auto pr-2">
-              {segments.map((segment) => (
+              {interim.remote_meeting || interim.zoom_desktop ? (
+                <p className="text-sm italic text-muted-foreground">
+                  {interim.remote_meeting || interim.zoom_desktop}
+                </p>
+              ) : null}
+              {interim.microphone ? (
+                <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
+              ) : null}
+              {[...segments].reverse().map((segment) => (
                 <p key={segment.id} className="text-sm">
                   <span
                     className={cn(
