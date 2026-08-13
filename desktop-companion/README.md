@@ -174,3 +174,21 @@ Build: `cd desktop-companion/src-tauri && cargo tauri build --features require-n
 3. **Echo** — candidate answers aloud; the browser's existing echo suppression
    must drop the loopback duplicate (`echo drops` increments in Diagnostics) and
    must not produce a second question.
+
+## Private Overlay (always-on-top bubble)
+
+A second, frameless window (`overlay.html`) rendered by this companion. It shows
+only the latest detected interviewer question and the streaming AI answer.
+
+- **Data flow** — the web app pushes read-only `overlay_*` frames over the same
+  authenticated localhost bridge (`ws://127.0.0.1:876x/bridge`). No tokens, audio
+  or transcripts are stored here; the overlay never makes network calls.
+- **Modes** — `bubble` (108×108 launcher), `mini` (380×220), `focus` (520×430).
+- **Shortcuts** — `Ctrl/⌘+Shift+O` toggle, `+S` cycle size, `+H` minimise to
+  bubble, `+.` next answer, `+,` previous answer.
+- **Screen-capture privacy** — `set_content_protected(true)` maps to
+  `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows 10 2004+ and to
+  `NSWindowSharingNone` on macOS. Windows exclusion is reliable for DWM-based
+  capture; macOS is best-effort (some ScreenCaptureKit full-display recorders may
+  still include it). The web UI reports the real state instead of promising it.
+- **Linux** — not supported; no capture-exclusion path is offered.

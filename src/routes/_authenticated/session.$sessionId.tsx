@@ -23,6 +23,8 @@ import { StatusDot } from "@/components/copilot/StatusIndicators";
 import { DockSource } from "@/components/copilot/DockSource";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CompanionPanel } from "@/components/copilot/CompanionPanel";
+import { OverlayControl } from "@/components/copilot/OverlayControl";
+import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
 
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
 import { sttDiagnostics } from "@/lib/copilot.functions";
@@ -160,6 +162,28 @@ function LiveSession() {
 
   const live = sessionState === "listening";
   const activeQuestion = useMemo(() => questions[0], [questions]);
+
+  /* Private overlay: a thin, read-only publisher on top of the existing session. */
+  const overlay = useOverlayPublisher({
+    sessionId,
+    sessionTitle: session?.title ?? "Interview session",
+    live,
+    paused: sessionState === "paused",
+    generating: questions.some((q) => q.status === "generating"),
+    elapsed,
+    source:
+      isZoomDesktop && !forceTabFallback
+        ? "Zoom Desktop"
+        : meetingStatus === "active"
+          ? "Meeting tab"
+          : sttTestMode
+            ? "Helper (mic)"
+            : "Microphone",
+    micLabel: micStatus === "active" ? (sttTestMode ? "Helper" : "Candidate") : "Mic off",
+    questions,
+  });
+
+
 
   const finish = async () => {
     await endSession();
@@ -588,7 +612,23 @@ function LiveSession() {
             </div>
           ) : null}
 
+          {/* private overlay */}
+          <OverlayControl
+            settings={overlay.settings}
+            patch={overlay.patch}
+            linkState={overlay.linkState}
+            status={overlay.status}
+            health={overlay.health}
+            pairingCode={overlay.pairingCode}
+            busy={overlay.busy}
+            error={overlay.error}
+            onPair={() => void overlay.startPairing()}
+            onDisconnect={overlay.disconnect}
+            onRefresh={() => void overlay.refresh()}
+          />
+
           {/* Helper toggle */}
+
           <div
             className="flex shrink-0 items-center gap-2 rounded-xl border border-border/70 bg-card/50 px-3 py-2"
             title="Helper mode — microphone speech is treated as interviewer input so you can validate the pipeline without a meeting."

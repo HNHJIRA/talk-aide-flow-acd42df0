@@ -230,6 +230,11 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
             "ping" => {
                 let _ = local_tx.send(Message::Text(json!({ "type": "pong" }).to_string())).await;
             }
+            // Private Overlay control + content frames. These never touch audio;
+            // they are forwarded verbatim to the native overlay window.
+            k if k.starts_with("overlay_") => {
+                let _ = state.overlay_tx.send(value.clone());
+            }
             _ => {}
         }
         state.write().last_browser_seen = Some(std::time::Instant::now());

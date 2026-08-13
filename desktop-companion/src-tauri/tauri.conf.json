@@ -19,7 +19,8 @@
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
     },
-    "withGlobalTauri": true
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

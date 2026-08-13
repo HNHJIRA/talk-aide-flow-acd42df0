@@ -2,12 +2,23 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Minimal capability set for the companion UI.",
-  "windows": ["main"],
+  "windows": [
+    "main",
+    "overlay"
+  ],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:window:allow-show",
     "core:window:allow-set-focus",
-    "opener:default"
+    "opener:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-content-protected",
+    "core:webview:default",
+    "global-shortcut:default"
   ]
 }
