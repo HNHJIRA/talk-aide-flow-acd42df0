@@ -612,7 +612,23 @@ function LiveSession() {
             </div>
           ) : null}
 
+          {/* private overlay */}
+          <OverlayControl
+            settings={overlay.settings}
+            patch={overlay.patch}
+            linkState={overlay.linkState}
+            status={overlay.status}
+            health={overlay.health}
+            pairingCode={overlay.pairingCode}
+            busy={overlay.busy}
+            error={overlay.error}
+            onPair={() => void overlay.startPairing()}
+            onDisconnect={overlay.disconnect}
+            onRefresh={() => void overlay.refresh()}
+          />
+
           {/* Helper toggle */}
+
           <div
             className="flex shrink-0 items-center gap-2 rounded-xl border border-border/70 bg-card/50 px-3 py-2"
             title="Helper mode — microphone speech is treated as interviewer input so you can validate the pipeline without a meeting."
