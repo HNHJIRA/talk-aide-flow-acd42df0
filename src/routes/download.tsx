@@ -29,6 +29,7 @@ export const Route = createFileRoute("/download")({
 const STEPS = [
   "Open InterviewCopilot-Companion.dmg.",
   "Drag InterviewCopilot Companion into Applications.",
+  'If macOS shows "Apple could not verify… Not Opened", click Done — never Move to Bin. Then follow the note below.',
   "Open InterviewCopilot Companion.",
   "Allow Screen & System Audio Recording when macOS asks.",
   "Return to InterviewCopilot and click Check again.",
