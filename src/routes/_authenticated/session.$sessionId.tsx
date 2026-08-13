@@ -14,7 +14,6 @@ import {
   Pin,
   StopCircle,
   Send,
-  Bug,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -73,7 +72,7 @@ function LiveSession() {
   const { sessionId } = Route.useParams();
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
-  const [showDebug, setShowDebug] = useState(false);
+  const [showDebug] = useState(false);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -634,15 +633,6 @@ function LiveSession() {
               className={cn(sessionState !== "idle" && "border-destructive/40 text-destructive hover:bg-destructive/10")}
             >
               <Square className="size-4" /> End
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => setShowDebug((v) => !v)}
-              aria-pressed={showDebug}
-            >
-              <Bug className="size-4" /> Diagnostics
             </Button>
           </div>
         </div>
