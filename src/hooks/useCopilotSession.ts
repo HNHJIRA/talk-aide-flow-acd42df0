@@ -1854,12 +1854,14 @@ export function useCopilotSession(opts: Options) {
       currentTurn,
       newTurn,
       activeTurn,
+      resolveSpeaker,
       schedulePrefetch,
       decideTurn,
       armHardCommit,
       scheduleSpeculation,
       streamLiveAnswer,
     ],
+
   );
 
 
