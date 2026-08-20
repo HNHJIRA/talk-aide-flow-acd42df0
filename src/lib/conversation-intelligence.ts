@@ -418,10 +418,19 @@ export class MeetingMemory {
   }
 
   recentTurnLines(count = 6): string[] {
-    return this.turns
-      .slice(-count)
-      .map((t) => `${t.speaker === "interviewer" ? "CLIENT" : t.speaker === "test" ? "TEST" : "ME"}: ${t.text}`);
+    return this.turns.slice(-count).map((t) => {
+      const who =
+        t.speaker === "interviewer"
+          ? (t.speakerLabel ?? "CLIENT").toUpperCase()
+          : t.speaker === "test"
+            ? "TEST"
+            : "ME";
+      const role =
+        t.speaker === "interviewer" && t.speakerRole === "primary_interviewer" ? " (primary)" : "";
+      return `${who}${role}: ${t.text}`;
+    });
   }
+
 
   previousAnswerSummary(): string {
     const last = this.answeredQuestions[this.answeredQuestions.length - 1];
