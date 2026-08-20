@@ -167,6 +167,15 @@ export type DebugInfo = {
   packetSubQuestions: number;
   rollingSummaryUpdated: string;
 
+  /* --- multi-participant speaker routing --- */
+  diarization: string;
+  remoteSpeakers: string;
+  answersRoutedFrom: string;
+  routedSegments: number;
+  ignoredSegments: number;
+  unassignedSegments: number;
+  turnSpeakerSplits: number;
+  turnSpeaker: string;
 
 
   /* --- desktop companion / Zoom Desktop --- */
