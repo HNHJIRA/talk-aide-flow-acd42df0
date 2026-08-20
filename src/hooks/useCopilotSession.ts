@@ -815,7 +815,12 @@ export function useCopilotSession(opts: Options) {
         : "";
 
       // LIVE CONTEXT PACKET: small, ranked, attributed. Never the transcript.
-      const packet = buildContextPacket(memory.current, questionText, turn.corrections);
+      const packet = buildContextPacket(
+        memory.current,
+        questionText,
+        turn.corrections,
+        turn.speakerLabel ?? undefined,
+      );
       if (!speculative)
         setMemoryView((prev) => ({
           ...prev,
@@ -1881,10 +1886,23 @@ export function useCopilotSession(opts: Options) {
       // the standard pipeline (and gets it too in Helper mode, which stands in
       // for the interviewer).
       const lowLatency = isRemote || optsRef.current.micMode === "test";
+      // Diarization is only available on the classic pipeline, so multi-participant
+      // routing deliberately trades Flux's eager end-of-turn for speaker indices —
+      // and only on the remote stream, never on the candidate microphone.
+      const diarize = isRemote && optsRef.current.multiParticipant;
+      if (isRemote) {
+        diarizationActive.current = diarize;
+        setDiarizationNote(
+          diarize
+            ? "on — nova-3 diarization (multi-participant routing)"
+            : "off — single remote voice",
+        );
+      }
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
         lowLatency,
+        diarize,
         onResult: (result) =>
           handleResult(
             isRemote ? remoteSourceRef.current : source,
