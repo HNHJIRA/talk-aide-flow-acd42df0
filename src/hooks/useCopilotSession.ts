@@ -1129,6 +1129,9 @@ export function useCopilotSession(opts: Options) {
                 answerId: null,
                 firstTokenMs: null,
                 pinned: false,
+                askedBy: turn.speakerLabel,
+                askedByRole: turn.speakerRole,
+
               },
               ...prev,
             ],
