@@ -24,6 +24,7 @@ import { DockSource } from "@/components/copilot/DockSource";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CompanionPanel } from "@/components/copilot/CompanionPanel";
 import { OverlayControl } from "@/components/copilot/OverlayControl";
+import { ParticipantsPanel } from "@/components/copilot/ParticipantsPanel";
 import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
 
 import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
@@ -77,6 +78,8 @@ function LiveSession() {
   const [showDebug] = useState(false);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
+  const [multiParticipant, setMultiParticipant] = useState(true);
+  const [autoAssignFirstSpeaker, setAutoAssignFirstSpeaker] = useState(true);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const caps = detectCapabilities();
 
@@ -111,6 +114,8 @@ function LiveSession() {
     micMode: sttTestMode ? "test" : micOnlyFallback ? "fallback" : "candidate",
     fallbackAutoDetect,
     micConstraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    multiParticipant,
+    autoAssignFirstSpeaker,
   });
 
   const {
@@ -148,6 +153,11 @@ function LiveSession() {
     togglePin,
     manualQuestion,
     promoteLastMicSegment,
+    speakers,
+    setSpeakerRole,
+    setPrimarySpeaker,
+    renameSpeaker,
+    diarizationNote,
   } = copilot;
 
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
@@ -340,6 +350,7 @@ function LiveSession() {
                   </div>
                 </div>
                 <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  {question.askedBy ? `${question.askedBy} · ` : ""}
                   {question.category}
                   {question.firstTokenMs ? ` · first token ${question.firstTokenMs}ms` : ""}
                 </p>
@@ -398,6 +409,14 @@ function LiveSession() {
               ["Speculative started / reused / aborted", `${debug.specStarted} / ${debug.specReused} / ${debug.specAborted}`],
               ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
               ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
+
+              ["— SPEAKER ROUTING —", ""],
+              ["Diarization", debug.diarization],
+              ["Remote speakers", debug.remoteSpeakers],
+              ["Answers routed from", debug.answersRoutedFrom],
+              ["Current turn speaker", debug.turnSpeaker],
+              ["Routed / ignored / unassigned segments", `${debug.routedSegments} / ${debug.ignoredSegments} / ${debug.unassignedSegments}`],
+              ["Turn splits on speaker change", String(debug.turnSpeakerSplits)],
 
               ["— CONVERSATION INTELLIGENCE —", ""],
               ["Current topic", debug.currentTopic],
@@ -611,6 +630,19 @@ function LiveSession() {
               })}
             </div>
           ) : null}
+
+          {/* remote participants / interviewer routing */}
+          <ParticipantsPanel
+            speakers={speakers}
+            enabled={multiParticipant}
+            onEnabledChange={setMultiParticipant}
+            autoAssignFirst={autoAssignFirstSpeaker}
+            onAutoAssignChange={setAutoAssignFirstSpeaker}
+            onSetRole={setSpeakerRole}
+            onSetPrimary={setPrimarySpeaker}
+            onRename={renameSpeaker}
+            note={diarizationNote}
+          />
 
           {/* private overlay */}
           <OverlayControl
