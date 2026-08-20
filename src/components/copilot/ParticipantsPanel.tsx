@@ -96,10 +96,18 @@ export function ParticipantsPanel({
           <div>
             <p className="text-sm font-semibold">Multi-participant routing</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Separates every remote voice so only the interviewer triggers answers.
+              Attempts to separate remote speakers when supported by the audio stream.
             </p>
           </div>
           <Switch checked={enabled} onCheckedChange={onEnabledChange} />
+        </div>
+
+        <div className="rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
+          <p className="text-[11px] font-medium text-foreground">{sourceLabel}</p>
+          <p className="text-[10px] text-muted-foreground">{capabilityLabel}</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Speaker separation: <span className="text-foreground/80">{separationStatus}</span>
+          </p>
         </div>
 
         <label className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
@@ -109,9 +117,23 @@ export function ParticipantsPanel({
           <Switch
             checked={autoAssignFirst}
             onCheckedChange={onAutoAssignChange}
-            disabled={!enabled}
+            disabled={!enabled || !speakerAwareAvailable}
           />
         </label>
+
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
+          <span className="text-[11px] text-muted-foreground">
+            Fall back to All Remote when voices can’t be separated
+          </span>
+          <Switch checked={autoFallbackEnabled} onCheckedChange={onAutoFallbackChange} />
+        </label>
+
+        {autoFallbackActive ? (
+          <p className="rounded-lg border border-warning/40 bg-warning/[0.08] px-2.5 py-2 text-[11px] text-warning">
+            Multiple attendees may be present, but their voices have not been separated. Switched to
+            All Remote so questions are not missed.
+          </p>
+        ) : null}
 
         {waiting ? (
           <p className="rounded-lg border border-warning/40 bg-warning/[0.08] px-2.5 py-2 text-[11px] text-warning">
