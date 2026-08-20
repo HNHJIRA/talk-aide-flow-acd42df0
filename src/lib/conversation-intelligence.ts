@@ -472,12 +472,15 @@ export type LiveContextPacket = {
   candidateClaims: string[];
   previousAnswerSummary: string;
   corrections: string[];
+  /** Roster label of the participant who asked, when diarization is active. */
+  askedBy?: string;
 };
 
 export function buildContextPacket(
   memory: MeetingMemory,
   question: string,
   correctionsForTurn: Correction[] = [],
+  askedBy?: string,
 ): LiveContextPacket {
   const resolvedQ = resolveQuestion(question, memory.lastTopic);
   return {
@@ -490,5 +493,7 @@ export function buildContextPacket(
     candidateClaims: memory.relevantClaims(resolvedQ.resolved),
     previousAnswerSummary: memory.previousAnswerSummary(),
     corrections: correctionsForTurn.map((c) => `"${c.from}" -> "${c.to}"`),
+    ...(askedBy ? { askedBy } : {}),
   };
 }
+
