@@ -604,7 +604,10 @@ export type LivePacket = {
   candidateClaims?: string[];
   previousAnswerSummary?: string;
   corrections?: string[];
+  /** Which remote participant asked this question (multi-participant calls). */
+  askedBy?: string;
 };
+
 
 /**
  * Knowledge priority (highest first): current turn > live meeting conversation
