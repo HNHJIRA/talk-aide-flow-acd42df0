@@ -32,6 +32,9 @@ function mmss(total) {
 function render(s) {
   document.body.classList.toggle("live", Boolean(s.live));
   $("question").textContent = s.question || "Waiting for the interviewer…";
+  const asked = $("askedBy");
+  asked.textContent = s.askedBy || "";
+  asked.hidden = !s.askedBy;
   $("answer").textContent =
     s.answer || (s.answerStatus === "generating" ? "…" : s.answerStatus === "error" ? "Answer failed." : "—");
   $("phase").textContent = PHASES[s.phase] ?? "";

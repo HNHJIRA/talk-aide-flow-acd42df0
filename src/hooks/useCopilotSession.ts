@@ -44,6 +44,16 @@ import {
   type CompanionState,
 } from "@/lib/companion/companion-client";
 
+import {
+  makeSpeaker,
+  SPEAKER_ROLE_LABELS,
+  roleDrivesAnswers,
+  roleIsHeard,
+  speakerTag,
+  type RemoteSpeaker,
+  type SpeakerRole,
+} from "@/lib/speakers";
+
 /** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
 export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
 
@@ -64,10 +74,16 @@ export type Segment = {
   id: string;
   source: SourceKind;
   speaker: Speaker;
+  /** Diarized remote speaker index, when multi-participant routing is on. */
+  speakerId: string | null;
+  /** Roster label at the time the line was heard. */
+  speakerLabel: string | null;
+  speakerRole: SpeakerRole | null;
   text: string;
   isFinal: boolean;
   at: number;
 };
+
 
 export type QuestionItem = {
   /** Stable client-side turn id; the row id arrives later and never blocks the UI. */
@@ -81,7 +97,11 @@ export type QuestionItem = {
   answerId: string | null;
   firstTokenMs: number | null;
   pinned: boolean;
+  /** Who asked it (roster label), when multi-participant routing is on. */
+  askedBy: string | null;
+  askedByRole: SpeakerRole | null;
 };
+
 
 
 export type DebugInfo = {
@@ -148,6 +168,15 @@ export type DebugInfo = {
   packetSubQuestions: number;
   rollingSummaryUpdated: string;
 
+  /* --- multi-participant speaker routing --- */
+  diarization: string;
+  remoteSpeakers: string;
+  answersRoutedFrom: string;
+  routedSegments: number;
+  ignoredSegments: number;
+  unassignedSegments: number;
+  turnSpeakerSplits: number;
+  turnSpeaker: string;
 
 
   /* --- desktop companion / Zoom Desktop --- */
@@ -215,7 +244,20 @@ type Options = {
   micMode: MicMode;
   fallbackAutoDetect: boolean;
   micConstraints: { echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean };
+  /**
+   * Multi-participant routing. When on, the remote stream is diarized and every
+   * remote voice becomes a roster entry the user assigns a role to. Answers only
+   * ever come from PRIMARY INTERVIEWER / INTERVIEWER roles.
+   */
+  multiParticipant: boolean;
+  /**
+   * Convenience only, and never a hardcoded "speaker 0 is the interviewer" rule:
+   * the FIRST remote voice actually heard is proposed as primary interviewer and
+   * can be reassigned at any time. Off = nothing answers until the user assigns.
+   */
+  autoAssignFirstSpeaker: boolean;
 };
+
 
 export function useCopilotSession(opts: Options) {
   const { sessionId } = opts;
@@ -240,6 +282,19 @@ export function useCopilotSession(opts: Options) {
   const [errors, setErrors] = useState<string[]>([]);
   const [online, setOnline] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+
+  /* --- remote speaker roster (multi-participant routing) --- */
+  const [speakers, setSpeakers] = useState<RemoteSpeaker[]>([]);
+  /**
+   * Mirror of the roster read on the hot path: role lookup for every transcript
+   * result must be synchronous and allocation-free, never a React re-render.
+   */
+  const speakersRef = useRef<Map<string, RemoteSpeaker>>(new Map());
+  const diarizationActive = useRef(false);
+  const [diarizationNote, setDiarizationNote] = useState("off — single interviewer");
+  const routingStats = useRef({ routed: 0, ignored: 0, unassigned: 0, splits: 0 });
+
+
 
   /* --- desktop companion --- */
   const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
@@ -281,6 +336,79 @@ export function useCopilotSession(opts: Options) {
     [],
   );
 
+  /* ---------------- remote speaker roster ---------------- */
+
+  const publishRoster = useCallback(() => {
+    setSpeakers(
+      [...speakersRef.current.values()].sort((a, b) => a.firstHeardAt - b.firstHeardAt),
+    );
+  }, []);
+
+  /**
+   * Look a diarized speaker up, registering it on first hearing. Deterministic
+   * and synchronous: no model call, no network, nothing that can add latency.
+   *
+   * Speaker index 0 is NEVER assumed to be the interviewer — a brand new voice is
+   * "unassigned" and, unless the user opted into auto-assigning the first voice
+   * heard, it cannot trigger an answer until a role is chosen.
+   */
+  const resolveSpeaker = useCallback(
+    (rawId: string | null, text: string): RemoteSpeaker => {
+      const id = rawId ?? "single";
+      const existing = speakersRef.current.get(id);
+      if (existing) {
+        existing.lastHeardAt = Date.now();
+        if (text) existing.lastText = text.slice(0, 160);
+        return existing;
+      }
+      const first = speakersRef.current.size === 0;
+      // Without diarization there is exactly one remote voice: it is the interviewer.
+      const role: SpeakerRole = !diarizationActive.current
+        ? "primary_interviewer"
+        : first && optsRef.current.autoAssignFirstSpeaker
+          ? "primary_interviewer"
+          : "unassigned";
+      const speaker = makeSpeaker(id, role);
+      if (text) speaker.lastText = text.slice(0, 160);
+      speakersRef.current.set(id, speaker);
+      publishRoster();
+      return speaker;
+    },
+    [publishRoster],
+  );
+
+  const setSpeakerRole = useCallback(
+    (id: string, role: SpeakerRole) => {
+      const speaker = speakersRef.current.get(id);
+      if (!speaker) return;
+      speaker.role = role;
+      publishRoster();
+    },
+    [publishRoster],
+  );
+
+  const renameSpeaker = useCallback(
+    (id: string, label: string) => {
+      const speaker = speakersRef.current.get(id);
+      if (!speaker) return;
+      speaker.label = label.trim() || speaker.label;
+      publishRoster();
+    },
+    [publishRoster],
+  );
+
+  /** Exactly one primary interviewer at a time. */
+  const setPrimarySpeaker = useCallback(
+    (id: string) => {
+      speakersRef.current.forEach((s) => {
+        if (s.role === "primary_interviewer") s.role = "interviewer";
+      });
+      const speaker = speakersRef.current.get(id);
+      if (speaker) speaker.role = "primary_interviewer";
+      publishRoster();
+    },
+    [publishRoster],
+  );
 
 
   const pushError = useCallback((message: string) => {
@@ -363,6 +491,11 @@ export function useCopilotSession(opts: Options) {
     timer: TurnTimer;
     status: TurnStatus;
     text: string;
+    /** Diarized speaker this logical turn belongs to; segments never cross it. */
+    speakerKey: string | null;
+    speakerLabel: string | null;
+    speakerRole: SpeakerRole | null;
+
     /** Every finalised STT segment that belongs to this logical turn. */
     segments: string[];
     /** Verbatim assembled text, kept for the audit trail. */
@@ -503,18 +636,22 @@ export function useCopilotSession(opts: Options) {
   });
   const [turnSilenceMs, setTurnSilenceMs] = useState(0);
 
-  const newTurn = useCallback(() => {
+  const newTurn = useCallback((speaker?: RemoteSpeaker | null) => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const turn: Turn = {
       id,
       timer: new TurnTimer(id),
       status: "listening",
       text: "",
+      speakerKey: speaker?.id ?? null,
+      speakerLabel: speaker?.label ?? null,
+      speakerRole: speaker?.role ?? null,
       segments: [],
       raw: "",
       corrections: [],
       resumedCount: 0,
       turnIndex: null,
+
       answered: false,
       segmentId: null,
       revision: 0,
@@ -688,7 +825,12 @@ export function useCopilotSession(opts: Options) {
         : "";
 
       // LIVE CONTEXT PACKET: small, ranked, attributed. Never the transcript.
-      const packet = buildContextPacket(memory.current, questionText, turn.corrections);
+      const packet = buildContextPacket(
+        memory.current,
+        questionText,
+        turn.corrections,
+        turn.speakerLabel ?? undefined,
+      );
       if (!speculative)
         setMemoryView((prev) => ({
           ...prev,
@@ -1110,6 +1252,9 @@ export function useCopilotSession(opts: Options) {
                 answerId: null,
                 firstTokenMs: null,
                 pinned: false,
+                askedBy: turn.speakerLabel,
+                askedByRole: turn.speakerRole,
+
               },
               ...prev,
             ],
@@ -1355,9 +1500,32 @@ export function useCopilotSession(opts: Options) {
    * reads like a fresh question starts a new one.
    */
   const activeTurn = useCallback(
-    (text: string) => {
+    (text: string, speaker?: RemoteSpeaker | null) => {
       const prev = turnRef.current;
-      if (!prev || !prev.answered) return currentTurn();
+      // Speaker-aware assembly: two different remote voices are two different
+      // logical turns, always — never merged, even inside the grace window.
+      if (prev && speaker && prev.speakerKey && prev.speakerKey !== speaker.id) {
+        routingStats.current.splits += 1;
+        if (!prev.answered) {
+          clearTurnTimers(prev);
+          prev.status = "cancelled";
+          if (prev.spec && !prev.spec.promoted) {
+            prev.spec.aborted = true;
+            prev.spec.controller.abort();
+            prev.spec = null;
+          }
+        }
+        return newTurn(speaker);
+      }
+      if (!prev || !prev.answered) {
+        const turn = currentTurn();
+        if (speaker && !turn.speakerKey) {
+          turn.speakerKey = speaker.id;
+          turn.speakerLabel = speaker.label;
+          turn.speakerRole = speaker.role;
+        }
+        return turn;
+      }
       const withinWindow =
         prev.committedAt != null && performance.now() - prev.committedAt <= LATE_CONTINUATION_MS;
       const norm = normalize(text);
@@ -1369,10 +1537,11 @@ export function useCopilotSession(opts: Options) {
         reopenTurn(prev);
         return prev;
       }
-      return newTurn();
+      return newTurn(speaker);
     },
-    [currentTurn, newTurn, reopenTurn],
+    [currentTurn, newTurn, reopenTurn, clearTurnTimers],
   );
+
 
 
 
@@ -1388,15 +1557,36 @@ export function useCopilotSession(opts: Options) {
         endMs: number | null;
         event?: SttEvent;
         turnIndex?: number | null;
+        /** Diarized remote speaker index, when multi-participant routing is on. */
+        speakerId?: string | null;
       },
     ) => {
       const isRemote = source !== "microphone";
       const mode = optsRef.current.micMode;
+
+      // ---- speaker routing (remote streams only, deterministic, no network) ----
+      const roster =
+        isRemote && optsRef.current.multiParticipant
+          ? resolveSpeaker(result.speakerId ?? null, result.text)
+          : null;
+      if (roster && !roleIsHeard(roster.role)) {
+        // Explicitly ignored participant: not transcribed into the session, not
+        // remembered, and it can never trigger an answer.
+        routingStats.current.ignored += 1;
+        if (result.isFinal) patchDiag({ lastTranscriptSource: `${source} (${roster.label} — ignored)` });
+        return;
+      }
+      const remoteMayAnswer = !roster || roleDrivesAnswers(roster.role);
+      if (roster && !remoteMayAnswer) routingStats.current.unassigned += 1;
+
       // Only an interviewer-side stream drives the low-latency machine; Helper mode
       // and opt-in mic-only fallback are the two explicit exceptions.
       const drivesDetection =
         optsRef.current.autoDetect &&
-        (isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect));
+        ((isRemote && remoteMayAnswer) ||
+          mode === "test" ||
+          (mode === "fallback" && optsRef.current.fallbackAutoDetect));
+
 
       if (!result.isFinal) {
         if (result.event === "start_of_turn") {
@@ -1404,8 +1594,13 @@ export function useCopilotSession(opts: Options) {
           // logical turn if the previous one is already resolved.
           if (drivesDetection) {
             const prev = turnRef.current;
-            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn();
+            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn(roster);
             const turn = currentTurn();
+            if (roster && !turn.speakerKey) {
+              turn.speakerKey = roster.id;
+              turn.speakerLabel = roster.label;
+              turn.speakerRole = roster.role;
+            }
             if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
           }
           return;
@@ -1455,7 +1650,7 @@ export function useCopilotSession(opts: Options) {
             pending.decideTimer = null;
             turnStats.current.merged += 1;
           }
-          const turn = activeTurn(result.text);
+          const turn = activeTurn(result.text, roster);
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
           turn.lastSpeechAt = performance.now();
@@ -1527,18 +1722,25 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({
         lastTranscriptSource: isRemote
-          ? `${source} (INTERVIEWER)`
+          ? `${source} (${roster ? speakerTag(roster) : "INTERVIEWER"})`
             : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
       });
       if (isRemote) counts.current.remote += 1;
       else counts.current.local += 1;
+      if (roster) {
+        roster.segments += 1;
+        if (remoteMayAnswer) routingStats.current.routed += 1;
+      }
 
       const segment: Segment = {
         id: `${source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         source,
         speaker,
+        speakerId: roster?.id ?? null,
+        speakerLabel: roster?.label ?? null,
+        speakerRole: roster?.role ?? null,
         text: result.text,
         isFinal: true,
         at: Date.now(),
@@ -1553,20 +1755,33 @@ export function useCopilotSession(opts: Options) {
       });
 
       // Every finalised segment enters meeting memory with its attribution:
-      // client facts and candidate claims are never mixed.
+      // client facts and candidate claims are never mixed, and each remote line
+      // keeps the participant it came from.
       memory.current.addTurn(
         speaker === "interviewer" ? "interviewer" : speaker === "test" ? "test" : "candidate",
         result.text,
+        roster
+          ? { speakerId: roster.id, speakerLabel: roster.label, speakerRole: roster.role }
+          : {},
       );
       memoryPending.current.push(
-        `${speaker === "interviewer" ? "CLIENT" : speaker === "test" ? "TEST" : "ME"}: ${result.text}`,
+        `${
+          speaker === "interviewer"
+            ? roster
+              ? roster.label.toUpperCase()
+              : "CLIENT"
+            : speaker === "test"
+              ? "TEST"
+              : "ME"
+        }: ${result.text}`,
       );
       if (memoryPending.current.length > 60) memoryPending.current = memoryPending.current.slice(-60);
       syncMeetingMemory();
 
+
       if (!drivesDetection) return;
 
-      const turn = activeTurn(result.text);
+      const turn = activeTurn(result.text, roster);
       if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
@@ -1657,12 +1872,14 @@ export function useCopilotSession(opts: Options) {
       currentTurn,
       newTurn,
       activeTurn,
+      resolveSpeaker,
       schedulePrefetch,
       decideTurn,
       armHardCommit,
       scheduleSpeculation,
       streamLiveAnswer,
     ],
+
   );
 
 
@@ -1679,10 +1896,23 @@ export function useCopilotSession(opts: Options) {
       // the standard pipeline (and gets it too in Helper mode, which stands in
       // for the interviewer).
       const lowLatency = isRemote || optsRef.current.micMode === "test";
+      // Diarization is only available on the classic pipeline, so multi-participant
+      // routing deliberately trades Flux's eager end-of-turn for speaker indices —
+      // and only on the remote stream, never on the candidate microphone.
+      const diarize = isRemote && optsRef.current.multiParticipant;
+      if (isRemote) {
+        diarizationActive.current = diarize;
+        setDiarizationNote(
+          diarize
+            ? "on — nova-3 diarization (multi-participant routing)"
+            : "off — single remote voice",
+        );
+      }
       const connection = new SttConnection({
         getToken: async () => createSttSession(),
         language: optsRef.current.language,
         lowLatency,
+        diarize,
         onResult: (result) =>
           handleResult(
             isRemote ? remoteSourceRef.current : source,
@@ -2128,7 +2358,25 @@ export function useCopilotSession(opts: Options) {
       packetCandidateClaims: memoryView.lastPacket.claims,
       packetSubQuestions: memoryView.lastPacket.subQuestions,
       rollingSummaryUpdated: memoryView.summaryUpdatedAt,
+      diarization: diarizationNote,
+      remoteSpeakers: speakers.length
+        ? speakers
+            .map((sp) => `${sp.label}: ${SPEAKER_ROLE_LABELS[sp.role]} (${sp.segments})`)
+            .join(" | ")
+        : "none heard yet",
+      answersRoutedFrom: (() => {
+        const primary = speakers.find((sp) => sp.role === "primary_interviewer");
+        const others = speakers.filter((sp) => sp.role === "interviewer").length;
+        if (!primary && !others) return "nobody assigned — answers paused";
+        return `${primary ? primary.label : "no primary"}${others ? ` + ${others} interviewer(s)` : ""}`;
+      })(),
+      routedSegments: routingStats.current.routed,
+      ignoredSegments: routingStats.current.ignored,
+      unassignedSegments: routingStats.current.unassigned,
+      turnSpeakerSplits: routingStats.current.splits,
+      turnSpeaker: turnRef.current?.speakerLabel ?? "—",
       companionState,
+
 
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
@@ -2169,6 +2417,8 @@ export function useCopilotSession(opts: Options) {
       companionFormat,
       meetingStatus,
       sttProfile,
+      speakers,
+      diarizationNote,
       turnView,
       turnSilenceMs,
       memoryView,
@@ -2194,6 +2444,15 @@ export function useCopilotSession(opts: Options) {
     latency,
     latencyHistory,
     aiCall,
+
+    /* remote speaker roster */
+    speakers,
+    setSpeakerRole,
+    setPrimarySpeaker,
+    renameSpeaker,
+    diarizationNote,
+
+
 
     companionHealth,
     companionState,

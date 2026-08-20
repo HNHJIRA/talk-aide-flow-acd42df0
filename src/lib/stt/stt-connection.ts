@@ -22,6 +22,11 @@ export type SttResult = {
   /** Richer turn signal; "interim"/"final" for the classic pipeline. */
   event: SttEvent;
   turnIndex: number | null;
+  /**
+   * Diarized speaker index reported by Deepgram ("0", "1", …) for this result,
+   * or null when diarization is off / unavailable on the active pipeline.
+   */
+  speakerId: string | null;
 };
 
 type Options = {
@@ -33,6 +38,12 @@ type Options = {
    * proven standard pipeline. Falls back automatically when unavailable.
    */
   lowLatency?: boolean;
+  /**
+   * Multi-participant routing: ask Deepgram to tag every word with a speaker
+   * index. Diarization only exists on the classic /v1/listen pipeline, so a
+   * diarized socket never uses Flux.
+   */
+  diarize?: boolean;
   onResult: (result: SttResult) => void;
   onState: (state: SttState, detail?: string) => void;
   onProfile?: (profile: SttProfile, detail: string) => void;
@@ -40,6 +51,29 @@ type Options = {
 
 const FLUX_URL = "wss://api.deepgram.com/v2/listen";
 const STANDARD_URL = "wss://api.deepgram.com/v1/listen";
+
+/**
+ * A diarized result can straddle two speakers. Attribute it to the speaker who
+ * says most of the words — deterministic, no model call, no added latency.
+ */
+function dominantSpeaker(words?: { speaker?: number }[]): string | null {
+  if (!words?.length) return null;
+  const counts = new Map<number, number>();
+  for (const w of words) {
+    if (typeof w.speaker !== "number") continue;
+    counts.set(w.speaker, (counts.get(w.speaker) ?? 0) + 1);
+  }
+  let best: number | null = null;
+  let bestCount = 0;
+  counts.forEach((count, speaker) => {
+    if (count > bestCount) {
+      best = speaker;
+      bestCount = count;
+    }
+  });
+  return best == null ? null : String(best);
+}
+
 
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
@@ -58,8 +92,11 @@ export class SttConnection {
   private fluxDisabled = false;
 
   constructor(private readonly opts: Options) {
-    this.profile = opts.lowLatency ? "flux" : "standard";
+    // Diarization is a /v1/listen feature: a multi-participant socket must stay
+    // on the classic pipeline, so speaker routing is never guesswork.
+    this.profile = opts.lowLatency && !opts.diarize ? "flux" : "standard";
   }
+
 
   getState() {
     return this.state;
@@ -105,8 +142,10 @@ export class SttConnection {
       utterance_end_ms: this.opts.lowLatency ? "1000" : "1000",
       language: this.opts.language ?? "en",
     });
+    if (this.opts.diarize) params.set("diarize", "true");
     return `${STANDARD_URL}?${params.toString()}`;
   }
+
 
   private async connect() {
     if (this.closedByUser) return;
@@ -138,10 +177,13 @@ export class SttConnection {
         openedWithProfile,
         openedWithProfile === "flux"
           ? "Deepgram Flux (conversational end-of-turn)"
-          : this.opts.lowLatency
-            ? "nova-3 (endpointing 150ms)"
-            : "nova-3 (endpointing 300ms)",
+          : this.opts.diarize
+            ? "nova-3 + diarization (endpointing 150ms)"
+            : this.opts.lowLatency
+              ? "nova-3 (endpointing 150ms)"
+              : "nova-3 (endpointing 300ms)",
       );
+
       this.setState("active");
       this.keepAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
@@ -192,7 +234,13 @@ export class SttConnection {
     const type = payload["type"] as string | undefined;
     if (type && type !== "Results") return;
     const channel = payload["channel"] as
-      | { alternatives?: { transcript?: string; confidence?: number }[] }
+      | {
+          alternatives?: {
+            transcript?: string;
+            confidence?: number;
+            words?: { speaker?: number; word?: string }[];
+          }[];
+        }
       | undefined;
     const alt = channel?.alternatives?.[0];
     const text = (alt?.transcript ?? "").trim();
@@ -208,8 +256,10 @@ export class SttConnection {
       endMs: start != null && duration != null ? Math.round((start + duration) * 1000) : null,
       event: isFinal ? "final" : "interim",
       turnIndex: null,
+      speakerId: dominantSpeaker(alt?.words),
     });
   }
+
 
   /** Flux TurnInfo frames: Update / EagerEndOfTurn / TurnResumed / EndOfTurn. */
   private handleFlux(payload: Record<string, unknown>) {
@@ -242,7 +292,9 @@ export class SttConnection {
       endMs: null,
       event: mapped,
       turnIndex,
+      speakerId: null,
     });
+
   }
 
   private scheduleReconnect() {

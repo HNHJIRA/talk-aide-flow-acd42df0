@@ -287,13 +287,31 @@ export function resolveQuestion(question: string, topic: string): ResolvedQuesti
  * 4. MEETING MEMORY
  * ============================================================ */
 
+export type TurnAttribution = {
+  /** Deepgram diarization index for remote speech, when available. */
+  speakerId?: string | null;
+  /** Human label from the roster ("Sarah", "Speaker 2"). */
+  speakerLabel?: string | null;
+  /** Assigned role: primary_interviewer / interviewer / other / ignore. */
+  speakerRole?: string | null;
+};
+
 export type MeetingTurn = {
   speaker: "interviewer" | "candidate" | "test";
   text: string;
   at: number;
+} & TurnAttribution;
+
+
+export type MeetingFact = {
+  label: string;
+  value: string;
+  saidBy: "client" | "candidate";
+  at: number;
+  /** Which remote participant said it, when diarization is active. */
+  speakerLabel?: string | null;
 };
 
-export type MeetingFact = { label: string; value: string; saidBy: "client" | "candidate"; at: number };
 export type MeetingClaim = { topic: string; claim: string; at: number };
 
 /** Numeric / concrete statements worth remembering verbatim. */
@@ -317,10 +335,10 @@ export class MeetingMemory {
   rollingSummary = "";
   lastTopic = "";
 
-  addTurn(speaker: MeetingTurn["speaker"], text: string) {
+  addTurn(speaker: MeetingTurn["speaker"], text: string, attribution: TurnAttribution = {}) {
     const clean = squash(text);
     if (!clean) return;
-    this.turns.push({ speaker, text: clean, at: Date.now() });
+    this.turns.push({ speaker, text: clean, at: Date.now(), ...attribution });
     if (this.turns.length > 120) this.turns = this.turns.slice(-120);
 
     const terms = keyTerms(clean, 4);
@@ -330,10 +348,18 @@ export class MeetingMemory {
       if (this.topics.length > 40) this.topics = this.topics.slice(-40);
     }
 
-    // Attribution matters: a client number is never a candidate claim.
+    // Attribution matters: a client number is never a candidate claim, and a
+    // fact stated by one remote participant is never attributed to another.
     if (speaker === "interviewer" && FACT_RE.test(clean)) {
       const value = clean.match(FACT_RE)?.[1] ?? "";
-      this.recordFact({ label: keyTerms(clean, 3).join(" ") || "detail", value: clean.slice(0, 180), saidBy: "client", at: Date.now(), _v: value });
+      this.recordFact({
+        label: keyTerms(clean, 3).join(" ") || "detail",
+        value: clean.slice(0, 180),
+        saidBy: "client",
+        at: Date.now(),
+        speakerLabel: attribution.speakerLabel ?? null,
+        _v: value,
+      });
     }
     if (speaker === "candidate" && CLAIM_RE.test(clean)) {
       this.claims.push({ topic: keyTerms(clean, 3).join(" ") || "general", claim: clean.slice(0, 180), at: Date.now() });
@@ -341,13 +367,21 @@ export class MeetingMemory {
     }
   }
 
+
   /** Newest explicit statement about a label wins; older one is superseded. */
   recordFact(fact: MeetingFact & { _v?: string }) {
     const existing = this.facts.findIndex((f) => f.label === fact.label && f.saidBy === fact.saidBy);
     if (existing >= 0) this.facts.splice(existing, 1);
-    this.facts.push({ label: fact.label, value: fact.value, saidBy: fact.saidBy, at: fact.at });
+    this.facts.push({
+      label: fact.label,
+      value: fact.value,
+      saidBy: fact.saidBy,
+      at: fact.at,
+      speakerLabel: fact.speakerLabel ?? null,
+    });
     if (this.facts.length > 40) this.facts = this.facts.slice(-40);
   }
+
 
   recordCorrections(corrections: Correction[]) {
     if (!corrections.length) return;
@@ -375,7 +409,10 @@ export class MeetingMemory {
       })
       .sort((a, b) => b.score - a.score || b.f.at - a.f.at)
       .slice(0, limit)
-      .map((x) => `${x.f.saidBy === "client" ? "CLIENT" : "CANDIDATE"}: ${x.f.value}`);
+      .map((x) =>
+        `${x.f.saidBy === "client" ? (x.f.speakerLabel ?? "CLIENT").toUpperCase() : "CANDIDATE"}: ${x.f.value}`,
+      );
+
   }
 
   relevantClaims(question: string, limit = 3): string[] {
@@ -391,10 +428,19 @@ export class MeetingMemory {
   }
 
   recentTurnLines(count = 6): string[] {
-    return this.turns
-      .slice(-count)
-      .map((t) => `${t.speaker === "interviewer" ? "CLIENT" : t.speaker === "test" ? "TEST" : "ME"}: ${t.text}`);
+    return this.turns.slice(-count).map((t) => {
+      const who =
+        t.speaker === "interviewer"
+          ? (t.speakerLabel ?? "CLIENT").toUpperCase()
+          : t.speaker === "test"
+            ? "TEST"
+            : "ME";
+      const role =
+        t.speaker === "interviewer" && t.speakerRole === "primary_interviewer" ? " (primary)" : "";
+      return `${who}${role}: ${t.text}`;
+    });
   }
+
 
   previousAnswerSummary(): string {
     const last = this.answeredQuestions[this.answeredQuestions.length - 1];
@@ -426,12 +472,15 @@ export type LiveContextPacket = {
   candidateClaims: string[];
   previousAnswerSummary: string;
   corrections: string[];
+  /** Roster label of the participant who asked, when diarization is active. */
+  askedBy?: string;
 };
 
 export function buildContextPacket(
   memory: MeetingMemory,
   question: string,
   correctionsForTurn: Correction[] = [],
+  askedBy?: string,
 ): LiveContextPacket {
   const resolvedQ = resolveQuestion(question, memory.lastTopic);
   return {
@@ -444,5 +493,7 @@ export function buildContextPacket(
     candidateClaims: memory.relevantClaims(resolvedQ.resolved),
     previousAnswerSummary: memory.previousAnswerSummary(),
     corrections: correctionsForTurn.map((c) => `"${c.from}" -> "${c.to}"`),
+    ...(askedBy ? { askedBy } : {}),
   };
 }
+

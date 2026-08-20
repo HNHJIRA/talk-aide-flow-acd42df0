@@ -178,6 +178,19 @@ body.live .dot {
   letter-spacing: 0;
 }
 
+/* Who asked, when several remote participants are on the call. */
+.asked-by {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+
+
 .question {
   font-size: 13px;
   font-weight: 600;
