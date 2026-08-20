@@ -52,6 +52,28 @@ type Options = {
 const FLUX_URL = "wss://api.deepgram.com/v2/listen";
 const STANDARD_URL = "wss://api.deepgram.com/v1/listen";
 
+/**
+ * A diarized result can straddle two speakers. Attribute it to the speaker who
+ * says most of the words — deterministic, no model call, no added latency.
+ */
+function dominantSpeaker(words?: { speaker?: number }[]): string | null {
+  if (!words?.length) return null;
+  const counts = new Map<number, number>();
+  for (const w of words) {
+    if (typeof w.speaker !== "number") continue;
+    counts.set(w.speaker, (counts.get(w.speaker) ?? 0) + 1);
+  }
+  let best: number | null = null;
+  let bestCount = 0;
+  counts.forEach((count, speaker) => {
+    if (count > bestCount) {
+      best = speaker;
+      bestCount = count;
+    }
+  });
+  return best == null ? null : String(best);
+}
+
 
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
