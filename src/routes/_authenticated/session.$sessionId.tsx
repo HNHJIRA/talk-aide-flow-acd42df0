@@ -126,6 +126,7 @@ function LiveSession() {
     multiParticipant,
     autoAssignFirstSpeaker,
     remoteRoutingMode,
+    autoFallbackAllRemote,
   });
 
   const {
