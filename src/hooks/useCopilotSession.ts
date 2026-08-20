@@ -1707,18 +1707,22 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({
         lastTranscriptSource: isRemote
-          ? `${source} (INTERVIEWER)`
+          ? `${source} (${roster ? `${roster.label} · ${speakerTag(roster.role)}` : "INTERVIEWER"})`
             : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
       });
       if (isRemote) counts.current.remote += 1;
       else counts.current.local += 1;
+      if (roster && remoteMayAnswer) routingStats.current.routed += 1;
 
       const segment: Segment = {
         id: `${source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         source,
         speaker,
+        speakerId: roster?.id ?? null,
+        speakerLabel: roster?.label ?? null,
+        speakerRole: roster?.role ?? null,
         text: result.text,
         isFinal: true,
         at: Date.now(),
@@ -1733,16 +1737,29 @@ export function useCopilotSession(opts: Options) {
       });
 
       // Every finalised segment enters meeting memory with its attribution:
-      // client facts and candidate claims are never mixed.
+      // client facts and candidate claims are never mixed, and each remote line
+      // keeps the participant it came from.
       memory.current.addTurn(
         speaker === "interviewer" ? "interviewer" : speaker === "test" ? "test" : "candidate",
         result.text,
+        roster
+          ? { speakerId: roster.id, speakerLabel: roster.label, speakerRole: roster.role }
+          : {},
       );
       memoryPending.current.push(
-        `${speaker === "interviewer" ? "CLIENT" : speaker === "test" ? "TEST" : "ME"}: ${result.text}`,
+        `${
+          speaker === "interviewer"
+            ? roster
+              ? roster.label.toUpperCase()
+              : "CLIENT"
+            : speaker === "test"
+              ? "TEST"
+              : "ME"
+        }: ${result.text}`,
       );
       if (memoryPending.current.length > 60) memoryPending.current = memoryPending.current.slice(-60);
       syncMeetingMemory();
+
 
       if (!drivesDetection) return;
 
