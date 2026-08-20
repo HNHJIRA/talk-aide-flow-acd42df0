@@ -46,6 +46,7 @@ import {
 
 import {
   makeSpeaker,
+  SPEAKER_ROLE_LABELS,
   roleDrivesAnswers,
   roleIsHeard,
   speakerTag,
