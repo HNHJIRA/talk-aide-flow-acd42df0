@@ -481,6 +481,11 @@ export function useCopilotSession(opts: Options) {
     timer: TurnTimer;
     status: TurnStatus;
     text: string;
+    /** Diarized speaker this logical turn belongs to; segments never cross it. */
+    speakerKey: string | null;
+    speakerLabel: string | null;
+    speakerRole: SpeakerRole | null;
+
     /** Every finalised STT segment that belongs to this logical turn. */
     segments: string[];
     /** Verbatim assembled text, kept for the audit trail. */
