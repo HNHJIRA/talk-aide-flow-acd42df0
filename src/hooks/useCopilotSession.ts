@@ -273,6 +273,19 @@ export function useCopilotSession(opts: Options) {
   const [online, setOnline] = useState(true);
   const [elapsed, setElapsed] = useState(0);
 
+  /* --- remote speaker roster (multi-participant routing) --- */
+  const [speakers, setSpeakers] = useState<RemoteSpeaker[]>([]);
+  /**
+   * Mirror of the roster read on the hot path: role lookup for every transcript
+   * result must be synchronous and allocation-free, never a React re-render.
+   */
+  const speakersRef = useRef<Map<string, RemoteSpeaker>>(new Map());
+  const diarizationActive = useRef(false);
+  const [diarizationNote, setDiarizationNote] = useState("off — single interviewer");
+  const routingStats = useRef({ routed: 0, ignored: 0, unassigned: 0, splits: 0 });
+
+
+
   /* --- desktop companion --- */
   const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
   const [companionState, setCompanionState] = useState<CompanionState>("disconnected");
