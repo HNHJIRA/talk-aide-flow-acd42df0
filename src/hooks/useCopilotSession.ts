@@ -1692,7 +1692,11 @@ export function useCopilotSession(opts: Options) {
         isRemote && optsRef.current.multiParticipant && result.speakerId != null
           ? resolveSpeaker(result.speakerId, result.text)
           : null;
-      if (roster && !roleIsHeard(roster.role)) {
+      if (
+        roster &&
+        optsRef.current.remoteRoutingMode === "speaker_aware" &&
+        !roleIsHeard(roster.role)
+      ) {
         // Explicitly ignored participant: not transcribed into the session, not
         // remembered, and it can never trigger an answer.
         routingStats.current.ignored += 1;

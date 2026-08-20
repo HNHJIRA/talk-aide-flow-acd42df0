@@ -36,13 +36,11 @@ export const sttDiagnostics = createServerFn({ method: "POST" })
     return deepgramDiagnostics();
   });
 
-const PrerecordedDiarizationInput = z.object({
-  wavBase64: z.string().min(1).max(3_000_000),
-});
-
 export const runPrerecordedDiarization = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => PrerecordedDiarizationInput.parse(input))
+  .inputValidator((input: unknown) =>
+    z.object({ wavBase64: z.string().min(1).max(3_000_000) }).parse(input),
+  )
   .handler(async ({ data }) => {
     const { analyzePrerecordedDiarization } = await import("@/lib/copilot.server");
     return analyzePrerecordedDiarization(data.wavBase64);
