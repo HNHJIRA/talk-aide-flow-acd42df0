@@ -96,6 +96,52 @@ export async function deepgramDiagnostics(): Promise<DeepgramDiagnostics> {
   };
 }
 
+export async function analyzePrerecordedDiarization(wavBase64: string) {
+  const apiKey = process.env["DEEPGRAM_API_KEY"];
+  if (!apiKey) throw new Error("Live transcription is not configured.");
+  const audio = Uint8Array.from(atob(wavBase64), (character) => character.charCodeAt(0));
+  const params = new URLSearchParams({
+    model: "nova-3",
+    smart_format: "true",
+    punctuate: "true",
+    diarize_model: "latest",
+  });
+  const response = await fetch(`https://api.deepgram.com/v1/listen?${params.toString()}`, {
+    method: "POST",
+    headers: { Authorization: `Token ${apiKey}`, "Content-Type": "audio/wav" },
+    body: audio,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Pre-recorded diarization failed (${response.status}): ${detail.slice(0, 160)}`);
+  }
+  const payload = (await response.json()) as {
+    metadata?: { model_info?: Record<string, { name?: string; version?: string }> };
+    results?: { channels?: { alternatives?: { words?: { word?: string; speaker?: number }[] }[] }[] };
+  };
+  const words = payload.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
+  const ids = [...new Set(words.flatMap((word) => (Number.isInteger(word.speaker) ? [word.speaker as number] : [])))];
+  const wordsBySpeaker: Record<string, number> = {};
+  let speakerChanges = 0;
+  let previous: number | null = null;
+  for (const word of words) {
+    if (!Number.isInteger(word.speaker)) continue;
+    const speaker = word.speaker as number;
+    wordsBySpeaker[String(speaker)] = (wordsBySpeaker[String(speaker)] ?? 0) + 1;
+    if (previous != null && previous !== speaker) speakerChanges += 1;
+    previous = speaker;
+  }
+  const model = Object.values(payload.metadata?.model_info ?? {})[0];
+  return {
+    uniqueSpeakerIds: ids.sort((a, b) => a - b),
+    wordsBySpeaker,
+    speakerChanges,
+    wordCount: words.length,
+    model: model?.name ?? "nova-3",
+    modelVersion: model?.version ?? null,
+  };
+}
+
 
 export const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 export const FAST_MODEL = "google/gemini-3.1-flash-lite";

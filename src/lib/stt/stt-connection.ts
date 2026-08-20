@@ -41,7 +41,14 @@ export type SttRequestConfig = {
   sampleRate: number;
   channels: number;
   diarizationRequested: boolean;
+  requestedDiarizer: string | null;
   interimResults: boolean;
+};
+
+export type SttMetadata = {
+  resolvedDiarizer: string | null;
+  diarizerVersion: string | null;
+  sttModel: string | null;
 };
 
 export type DiarizationFrame = {
@@ -69,6 +76,7 @@ type Options = {
   onState: (state: SttState, detail?: string) => void;
   onProfile?: (profile: SttProfile, detail: string) => void;
   onRequestConfig?: (config: SttRequestConfig) => void;
+  onMetadata?: (metadata: SttMetadata) => void;
   onDiarization?: (frame: DiarizationFrame) => void;
 };
 
@@ -199,7 +207,7 @@ export class SttConnection {
       utterance_end_ms: this.opts.lowLatency ? "1000" : "1000",
       language: this.opts.language ?? "en",
     });
-    if (this.opts.diarize) params.set("diarize", "true");
+    if (this.opts.diarize) params.set("diarize_model", "latest");
     return `${STANDARD_URL}?${params.toString()}`;
   }
 
@@ -211,7 +219,8 @@ export class SttConnection {
       encoding: parsed.searchParams.get("encoding") ?? "unknown",
       sampleRate: Number(parsed.searchParams.get("sample_rate") ?? STT_SAMPLE_RATE),
       channels: Number(parsed.searchParams.get("channels") ?? 1),
-      diarizationRequested: parsed.searchParams.get("diarize") === "true",
+      diarizationRequested: parsed.searchParams.has("diarize_model"),
+      requestedDiarizer: parsed.searchParams.get("diarize_model"),
       interimResults: parsed.searchParams.get("interim_results") === "true",
     };
   }
@@ -303,6 +312,29 @@ export class SttConnection {
   /** Classic /v1/listen Results frames. */
   private handleStandard(payload: Record<string, unknown>) {
     const type = payload["type"] as string | undefined;
+    if (type === "Metadata") {
+      const modelInfo = payload["model_info"] as Record<string, unknown> | undefined;
+      const diarizerInfo = (payload["diarizer_info"] ?? payload["diarize_info"]) as
+        | Record<string, unknown>
+        | undefined;
+      this.opts.onMetadata?.({
+        resolvedDiarizer:
+          typeof diarizerInfo?.["name"] === "string"
+            ? String(diarizerInfo["name"])
+            : typeof payload["diarize_model"] === "string"
+              ? String(payload["diarize_model"])
+              : null,
+        diarizerVersion:
+          typeof diarizerInfo?.["version"] === "string" ? String(diarizerInfo["version"]) : null,
+        sttModel:
+          typeof modelInfo?.["name"] === "string"
+            ? String(modelInfo["name"])
+            : typeof payload["model"] === "string"
+              ? String(payload["model"])
+              : null,
+      });
+      return;
+    }
     if (type && type !== "Results") return;
     const channel = payload["channel"] as
       | {

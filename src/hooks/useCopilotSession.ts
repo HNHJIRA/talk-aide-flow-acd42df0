@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
+import {
+  createPcmSource,
+  stopStream,
+  type PcmMetrics,
+  type PcmSource,
+} from "@/lib/audio/pcm-source";
+import { blobToBase64, linear16ToWav } from "@/lib/audio/wav";
 import {
   SttConnection,
   type SttState,
@@ -14,6 +20,7 @@ import {
   detectQuestion,
   prefetchContext,
   primeLiveContext,
+  runPrerecordedDiarization,
   updateMeetingMemory,
 } from "@/lib/copilot.functions";
 import {
@@ -65,6 +72,7 @@ export type SessionState =
 
 export type MicMode = "candidate" | "test" | "fallback";
 export type Speaker = "interviewer" | "candidate" | "test";
+export type RemoteRoutingMode = "speaker_aware" | "all_remote" | "manual";
 
 export type Segment = {
   id: string;
@@ -183,6 +191,17 @@ export type DebugInfo = {
   speakerChangesDetected: number;
   unknownSpeakerWords: number;
   rosterEntriesCreated: number;
+  requestedDiarizer: string;
+  resolvedDiarizer: string;
+  diarizerVersion: string;
+  remoteAudioSeconds: number;
+  remoteSpeechSeconds: number;
+  remoteRms: number;
+  remotePeak: number;
+  remoteClippingCount: number;
+  remoteSilencePercentage: number;
+  remoteRecording: string;
+  prerecordedControl: string;
 
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
@@ -264,6 +283,7 @@ type Options = {
    * can be reassigned at any time. Off = nothing answers until the user assigns.
    */
   autoAssignFirstSpeaker: boolean;
+  remoteRoutingMode: RemoteRoutingMode;
 };
 
 export function useCopilotSession(opts: Options) {
@@ -314,7 +334,20 @@ export function useCopilotSession(opts: Options) {
     speakerChanges: 0,
     unknownWords: 0,
     rosterEntriesCreated: 0,
+    resolvedDiarizer: null as string | null,
+    diarizerVersion: null as string | null,
   });
+  const [remoteAudioMetrics, setRemoteAudioMetrics] = useState<PcmMetrics>({
+    rms: 0,
+    peak: 0,
+    clippingCount: 0,
+    audioSeconds: 0,
+    speechSeconds: 0,
+    silencePercentage: 100,
+  });
+  const [remoteRecording, setRemoteRecording] = useState(false);
+  const [capturedRemoteWav, setCapturedRemoteWav] = useState<Blob | null>(null);
+  const [prerecordedControl, setPrerecordedControl] = useState("not run");
   const lastDiarizedSpeaker = useRef<number | null>(null);
 
   /* --- desktop companion --- */
@@ -1659,7 +1692,11 @@ export function useCopilotSession(opts: Options) {
         isRemote && optsRef.current.multiParticipant && result.speakerId != null
           ? resolveSpeaker(result.speakerId, result.text)
           : null;
-      if (roster && !roleIsHeard(roster.role)) {
+      if (
+        roster &&
+        optsRef.current.remoteRoutingMode === "speaker_aware" &&
+        !roleIsHeard(roster.role)
+      ) {
         // Explicitly ignored participant: not transcribed into the session, not
         // remembered, and it can never trigger an answer.
         routingStats.current.ignored += 1;
@@ -1668,9 +1705,15 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       const remoteMayAnswer =
-        isRemote && optsRef.current.multiParticipant
-          ? Boolean(roster && roleDrivesAnswers(roster.role))
-          : true;
+        !isRemote
+          ? false
+          : optsRef.current.remoteRoutingMode === "all_remote"
+            ? true
+            : optsRef.current.remoteRoutingMode === "manual"
+              ? false
+              : optsRef.current.multiParticipant
+                ? Boolean(roster && roleDrivesAnswers(roster.role))
+                : true;
       if (roster && !remoteMayAnswer) routingStats.current.unassigned += 1;
 
       // Only an interviewer-side stream drives the low-latency machine; Helper mode
@@ -2018,6 +2061,14 @@ export function useCopilotSession(opts: Options) {
         onRequestConfig: (config) => {
           if (isRemote) setDiarizationDebug((prev) => ({ ...prev, config }));
         },
+        onMetadata: (metadata) => {
+          if (!isRemote) return;
+          setDiarizationDebug((prev) => ({
+            ...prev,
+            resolvedDiarizer: metadata.resolvedDiarizer ?? prev.resolvedDiarizer,
+            diarizerVersion: metadata.diarizerVersion ?? prev.diarizerVersion,
+          }));
+        },
         ...(isRemote ? { onDiarization: handleDiarizationFrame } : {}),
         onState: (state, detail) => {
           setState(state);
@@ -2335,12 +2386,75 @@ export function useCopilotSession(opts: Options) {
     [runDetection],
   );
 
+  const answerRemoteSegment = useCallback(
+    async (segmentId: string) => {
+      const segment = segmentsRef.current.find(
+        (candidate) => candidate.id === segmentId && candidate.source !== "microphone",
+      );
+      if (!segment) {
+        pushError("That remote transcript is no longer available.");
+        return;
+      }
+      await runDetection(segment.text, null);
+    },
+    [pushError, runDetection],
+  );
+
+  const startRemotePcmRecording = useCallback(() => {
+    if (!import.meta.env.DEV) return;
+    const source = meetingPcm.current;
+    if (!source) {
+      pushError("Connect browser meeting audio before recording PCM.");
+      return;
+    }
+    source.startRecording();
+    setCapturedRemoteWav(null);
+    setPrerecordedControl("not run");
+    setRemoteRecording(true);
+  }, [pushError]);
+
+  const stopRemotePcmRecording = useCallback(() => {
+    const source = meetingPcm.current;
+    if (!source?.isRecording()) return;
+    setCapturedRemoteWav(linear16ToWav(source.stopRecording()));
+    setRemoteRecording(false);
+  }, []);
+
+  const downloadRemotePcmRecording = useCallback(() => {
+    if (!capturedRemoteWav) return;
+    const url = URL.createObjectURL(capturedRemoteWav);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `interviewcopilot-remote-${Date.now()}.wav`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [capturedRemoteWav]);
+
+  const runPrerecordedControl = useCallback(async () => {
+    if (!import.meta.env.DEV || !capturedRemoteWav) return;
+    setPrerecordedControl("running…");
+    try {
+      const result = await runPrerecordedDiarization({
+        data: { wavBase64: await blobToBase64(capturedRemoteWav) },
+      });
+      setPrerecordedControl(
+        `IDs [${result.uniqueSpeakerIds.join(", ")}] · ${result.wordCount} words · ${result.speakerChanges} changes · ${Object.entries(result.wordsBySpeaker)
+          .map(([id, count]) => `${id}: ${count}`)
+          .join(" | ")}`,
+      );
+    } catch (error) {
+      setPrerecordedControl(error instanceof Error ? error.message : "Pre-recorded control failed.");
+    }
+  }, [capturedRemoteWav]);
+
   /* ---------------- meters, timers, network ---------------- */
 
   useEffect(() => {
     const id = setInterval(() => {
       setMicLevel(micPcm.current?.getLevel() ?? 0);
       setMeetingLevel(meetingPcm.current?.getLevel() ?? 0);
+      const metrics = meetingPcm.current?.getMetrics();
+      if (metrics) setRemoteAudioMetrics(metrics);
       const turn = turnRef.current;
       setTurnSilenceMs(turn ? Math.round(performance.now() - turn.lastSpeechAt) : 0);
     }, 120);
@@ -2469,7 +2583,7 @@ export function useCopilotSession(opts: Options) {
       turnSpeaker: turnRef.current?.speakerLabel ?? "—",
       diarizationModel: diarizationDebug.config?.model ?? "not connected",
       diarizationRequestConfig: diarizationDebug.config
-        ? `${diarizationDebug.config.endpoint}?model=${diarizationDebug.config.model}&encoding=${diarizationDebug.config.encoding}&sample_rate=${diarizationDebug.config.sampleRate}&channels=${diarizationDebug.config.channels}&interim_results=${diarizationDebug.config.interimResults}&diarize=${diarizationDebug.config.diarizationRequested}`
+        ? `${diarizationDebug.config.endpoint}?model=${diarizationDebug.config.model}&encoding=${diarizationDebug.config.encoding}&sample_rate=${diarizationDebug.config.sampleRate}&channels=${diarizationDebug.config.channels}&interim_results=${diarizationDebug.config.interimResults}&diarize_model=${diarizationDebug.config.requestedDiarizer ?? "off"}`
         : "not connected",
       diarizationRequested: diarizationDebug.config?.diarizationRequested ? "yes" : "no",
       diarizationActive: diarizationDebug.active
@@ -2507,6 +2621,17 @@ export function useCopilotSession(opts: Options) {
       speakerChangesDetected: diarizationDebug.speakerChanges,
       unknownSpeakerWords: diarizationDebug.unknownWords,
       rosterEntriesCreated: diarizationDebug.rosterEntriesCreated,
+      requestedDiarizer: diarizationDebug.config?.requestedDiarizer ?? "not requested",
+      resolvedDiarizer: diarizationDebug.resolvedDiarizer ?? "not reported by service",
+      diarizerVersion: diarizationDebug.diarizerVersion ?? "not reported by service",
+      remoteAudioSeconds: remoteAudioMetrics.audioSeconds,
+      remoteSpeechSeconds: remoteAudioMetrics.speechSeconds,
+      remoteRms: remoteAudioMetrics.rms,
+      remotePeak: remoteAudioMetrics.peak,
+      remoteClippingCount: remoteAudioMetrics.clippingCount,
+      remoteSilencePercentage: remoteAudioMetrics.silencePercentage,
+      remoteRecording: remoteRecording ? "recording" : capturedRemoteWav ? "captured locally" : "off",
+      prerecordedControl,
       companionState,
 
       companionVersion: companionHealth?.version ?? "not detected",
@@ -2554,6 +2679,10 @@ export function useCopilotSession(opts: Options) {
       turnView,
       turnSilenceMs,
       memoryView,
+      remoteAudioMetrics,
+      remoteRecording,
+      capturedRemoteWav,
+      prerecordedControl,
     ],
   );
 
@@ -2583,6 +2712,14 @@ export function useCopilotSession(opts: Options) {
     setPrimarySpeaker,
     renameSpeaker,
     diarizationNote,
+    remoteSpeakerWarning:
+      opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && diarizationDebug.uniqueIds.length <= 1,
+    remoteRecording,
+    hasRemoteRecording: Boolean(capturedRemoteWav),
+    startRemotePcmRecording,
+    stopRemotePcmRecording,
+    downloadRemotePcmRecording,
+    runPrerecordedControl,
 
     companionHealth,
     companionState,
@@ -2600,6 +2737,7 @@ export function useCopilotSession(opts: Options) {
     regenerate,
     togglePin,
     manualQuestion,
+    answerRemoteSegment,
     promoteLastMicSegment,
   };
 }

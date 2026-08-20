@@ -27,7 +27,11 @@ import { OverlayControl } from "@/components/copilot/OverlayControl";
 import { ParticipantsPanel } from "@/components/copilot/ParticipantsPanel";
 import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
 
-import { useCopilotSession, type SourceStatus } from "@/hooks/useCopilotSession";
+import {
+  useCopilotSession,
+  type RemoteRoutingMode,
+  type SourceStatus,
+} from "@/hooks/useCopilotSession";
 import { sttDiagnostics } from "@/lib/copilot.functions";
 import { detectCapabilities } from "@/lib/audio/capability";
 import { formatDuration, PLATFORM_LABELS } from "@/lib/format";
@@ -82,6 +86,7 @@ function LiveSession() {
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const [multiParticipant, setMultiParticipant] = useState(true);
   const [autoAssignFirstSpeaker, setAutoAssignFirstSpeaker] = useState(true);
+  const [remoteRoutingMode, setRemoteRoutingMode] = useState<RemoteRoutingMode>("speaker_aware");
   const transcriptRef = useRef<HTMLDivElement>(null);
   const caps = detectCapabilities();
 
@@ -119,6 +124,7 @@ function LiveSession() {
     micConstraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     multiParticipant,
     autoAssignFirstSpeaker,
+    remoteRoutingMode,
   });
 
   const {
@@ -161,6 +167,14 @@ function LiveSession() {
     setPrimarySpeaker,
     renameSpeaker,
     diarizationNote,
+    remoteSpeakerWarning,
+    remoteRecording,
+    hasRemoteRecording,
+    startRemotePcmRecording,
+    stopRemotePcmRecording,
+    downloadRemotePcmRecording,
+    runPrerecordedControl,
+    answerRemoteSegment,
   } = copilot;
 
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
@@ -276,7 +290,8 @@ function LiveSession() {
               <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
             ) : null}
             {[...segments].reverse().map((segment) => (
-              <p key={segment.id} className="text-sm">
+              <div key={segment.id} className="flex items-start gap-2 text-sm">
+                <p className="min-w-0 flex-1">
                 <span
                   className={cn(
                     "mr-2 text-[11px] font-semibold uppercase tracking-wide",
@@ -296,8 +311,20 @@ function LiveSession() {
                       ? "Helper"
                       : "You"}
                 </span>
-                <span className="text-foreground/90">{segment.text}</span>
-              </p>
+                  <span className="text-foreground/90">{segment.text}</span>
+                </p>
+                {remoteRoutingMode === "manual" && segment.source !== "microphone" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0 px-2 text-[11px]"
+                    onClick={() => void answerRemoteSegment(segment.id)}
+                  >
+                    Answer this
+                  </Button>
+                ) : null}
+              </div>
             ))}
             {segments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -452,6 +479,9 @@ function LiveSession() {
               ["Diarization enabled", debug.diarization],
               ["Model", debug.diarizationModel],
               ["Actual request configuration", debug.diarizationRequestConfig],
+              ["Requested diarizer", debug.requestedDiarizer],
+              ["Resolved diarizer", debug.resolvedDiarizer],
+              ["Diarizer version", debug.diarizerVersion],
               ["Diarization requested", debug.diarizationRequested],
               ["Diarization active", debug.diarizationActive],
               ["Raw unique speaker IDs seen this session", debug.rawUniqueSpeakerIds],
@@ -471,6 +501,13 @@ function LiveSession() {
                 `${debug.routedSegments} / ${debug.ignoredSegments} / ${debug.unassignedSegments}`,
               ],
               ["Turn splits on speaker change", String(debug.turnSpeakerSplits)],
+              ["— REMOTE AUDIO QUALITY —", ""],
+              ["Captured audio / detected speech", `${debug.remoteAudioSeconds.toFixed(1)}s / ${debug.remoteSpeechSeconds.toFixed(1)}s`],
+              ["Remote RMS / peak", `${(debug.remoteRms * 100).toFixed(2)}% / ${(debug.remotePeak * 100).toFixed(2)}%`],
+              ["Clipped samples", String(debug.remoteClippingCount)],
+              ["Silence", `${debug.remoteSilencePercentage.toFixed(1)}%`],
+              ["Local PCM capture", debug.remoteRecording],
+              ["Pre-recorded control", debug.prerecordedControl],
 
               ["— CONVERSATION INTELLIGENCE —", ""],
               ["Current topic", debug.currentTopic],
@@ -730,8 +767,47 @@ function LiveSession() {
             onSetRole={setSpeakerRole}
             onSetPrimary={setPrimarySpeaker}
             onRename={renameSpeaker}
-            note={diarizationNote}
+            note={
+              remoteSpeakerWarning
+                ? "Multiple attendees are present, but the audio service has not separated their voices yet."
+                : diarizationNote
+            }
           />
+
+          <div className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-muted/30 p-1">
+            {(
+              [
+                ["speaker_aware", "Speaker-aware"],
+                ["all_remote", "All remote"],
+                ["manual", "Manual trigger"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                type="button"
+                size="sm"
+                variant={remoteRoutingMode === value ? "secondary" : "ghost"}
+                className="h-8 text-[11px]"
+                onClick={() => setRemoteRoutingMode(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+
+          {import.meta.env.DEV ? (
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+              <Button type="button" size="sm" variant="ghost" onClick={remoteRecording ? stopRemotePcmRecording : startRemotePcmRecording}>
+                {remoteRecording ? "Stop PCM" : "Record PCM"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" disabled={!hasRemoteRecording} onClick={downloadRemotePcmRecording}>
+                Download WAV
+              </Button>
+              <Button type="button" size="sm" variant="ghost" disabled={!hasRemoteRecording} onClick={() => void runPrerecordedControl()}>
+                Run control
+              </Button>
+            </div>
+          ) : null}
 
           {/* private overlay */}
           <OverlayControl
