@@ -2417,6 +2417,8 @@ export function useCopilotSession(opts: Options) {
       companionFormat,
       meetingStatus,
       sttProfile,
+      speakers,
+      diarizationNote,
       turnView,
       turnSilenceMs,
       memoryView,
