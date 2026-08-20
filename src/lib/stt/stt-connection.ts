@@ -70,8 +70,11 @@ export class SttConnection {
   private fluxDisabled = false;
 
   constructor(private readonly opts: Options) {
-    this.profile = opts.lowLatency ? "flux" : "standard";
+    // Diarization is a /v1/listen feature: a multi-participant socket must stay
+    // on the classic pipeline, so speaker routing is never guesswork.
+    this.profile = opts.lowLatency && !opts.diarize ? "flux" : "standard";
   }
+
 
   getState() {
     return this.state;
