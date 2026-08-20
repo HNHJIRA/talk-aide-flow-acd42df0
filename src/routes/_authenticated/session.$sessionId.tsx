@@ -780,6 +780,13 @@ function LiveSession() {
                 ? "Multiple attendees are present, but the audio service has not separated their voices yet."
                 : diarizationNote
             }
+            sourceLabel={isZoomDesktop ? "Zoom Desktop companion audio" : "Browser tab meeting audio"}
+            capabilityLabel={capabilityLabel}
+            separationStatus={speakerSeparationStatus}
+            speakerAwareAvailable={speakerAwareAvailable}
+            autoFallbackEnabled={autoFallbackAllRemote}
+            onAutoFallbackChange={setAutoFallbackAllRemote}
+            autoFallbackActive={autoFallbackActive}
           />
 
           <div className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-muted/30 p-1">
@@ -794,11 +801,23 @@ function LiveSession() {
                 key={value}
                 type="button"
                 size="sm"
-                variant={remoteRoutingMode === value ? "secondary" : "ghost"}
+                variant={
+                  effectiveRoutingMode === value
+                    ? "secondary"
+                    : remoteRoutingMode === value
+                      ? "outline"
+                      : "ghost"
+                }
                 className="h-8 text-[11px]"
+                title={
+                  value === "speaker_aware" && !speakerAwareAvailable
+                    ? `Only ${separatedVoices || 0} voice label detected so far — separation is best-effort on mixed meeting audio.`
+                    : undefined
+                }
                 onClick={() => setRemoteRoutingMode(value)}
               >
                 {label}
+                {value === "speaker_aware" && autoFallbackActive ? " (fell back)" : ""}
               </Button>
             ))}
           </div>
