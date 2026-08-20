@@ -2,9 +2,8 @@
  * REMOTE PARTICIPANTS
  *
  * One Zoom/Meet audio stream can carry several people. Deepgram diarization only
- * gives us anonymous indices, so the user — never a heuristic — decides who the
- * interviewer is. Nothing is answered until at least one voice holds an
- * interviewer role.
+ * gives us temporary acoustic clusters, not stable human identities. Assignments
+ * are session-local hints and are only trusted while those labels remain stable.
  */
 import { Crown, EarOff, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -38,6 +37,9 @@ type Props = {
   autoFallbackEnabled: boolean;
   onAutoFallbackChange: (value: boolean) => void;
   autoFallbackActive: boolean;
+  identityConfidence: "none" | "best-effort" | "deterministic";
+  labelStability: "stable" | "unstable";
+  fallbackReason: string | null;
 };
 
 const ROLE_TONE: Record<SpeakerRole, string> = {
@@ -65,6 +67,9 @@ export function ParticipantsPanel({
   autoFallbackEnabled,
   onAutoFallbackChange,
   autoFallbackActive,
+  identityConfidence,
+  labelStability,
+  fallbackReason,
 }: Props) {
   const answering = speakers.filter((s) => roleDrivesAnswers(s.role)).length;
   const waiting =
@@ -81,10 +86,10 @@ export function ParticipantsPanel({
               ? "border-warning/40 bg-warning/[0.08] text-warning hover:bg-warning/[0.14]"
               : "border-border/70 bg-card/50 text-muted-foreground hover:text-foreground",
           )}
-          title="Assign who counts as the interviewer when several people are on the call"
+          title="Review temporary voice labels for this mixed meeting stream"
         >
           <Users className="size-3.5" />
-          Participants
+          Voice labels
           <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
             {speakers.length}
           </span>
@@ -94,9 +99,9 @@ export function ParticipantsPanel({
       <PopoverContent side="top" align="start" className="w-[340px] space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold">Multi-participant routing</p>
+            <p className="text-sm font-semibold">Best-effort voice routing</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Attempts to separate remote speakers when supported by the audio stream.
+              Diarization labels are temporary clusters, not verified people.
             </p>
           </div>
           <Switch checked={enabled} onCheckedChange={onEnabledChange} />
@@ -106,13 +111,19 @@ export function ParticipantsPanel({
           <p className="text-[11px] font-medium text-foreground">{sourceLabel}</p>
           <p className="text-[10px] text-muted-foreground">{capabilityLabel}</p>
           <p className="mt-1 text-[10px] text-muted-foreground">
-            Speaker separation: <span className="text-foreground/80">{separationStatus}</span>
+            Voice separation: <span className="text-foreground/80">{separationStatus}</span>
+          </p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Identity confidence: <span className="text-foreground/80">{identityConfidence}</span>
+          </p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Label stability: <span className={labelStability === "unstable" ? "text-warning" : "text-foreground/80"}>{labelStability}</span>
           </p>
         </div>
 
         <label className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
           <span className="text-[11px] text-muted-foreground">
-            Assume the first voice heard is the interviewer
+            Treat the first current voice label as interviewer
           </span>
           <Switch
             checked={autoAssignFirst}
@@ -123,15 +134,16 @@ export function ParticipantsPanel({
 
         <label className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
           <span className="text-[11px] text-muted-foreground">
-            Fall back to All Remote when voices can’t be separated
+            Fall back when labels are missing or unstable
           </span>
           <Switch checked={autoFallbackEnabled} onCheckedChange={onAutoFallbackChange} />
         </label>
 
         {autoFallbackActive ? (
           <p className="rounded-lg border border-warning/40 bg-warning/[0.08] px-2.5 py-2 text-[11px] text-warning">
-            Multiple attendees may be present, but their voices have not been separated. Switched to
-            All Remote so questions are not missed.
+            {fallbackReason === "speaker label instability"
+              ? "Voice labels became unstable. Switched to All Remote so questions are not missed."
+              : "Voices have not been separated reliably. Switched to All Remote so questions are not missed."}
           </p>
         ) : null}
 
@@ -142,6 +154,11 @@ export function ParticipantsPanel({
         ) : null}
 
         <div className="max-h-[46vh] space-y-2 overflow-y-auto">
+          {speakers.some((speaker) => speaker.customName) && identityConfidence !== "deterministic" ? (
+            <p className="rounded-lg border border-warning/40 bg-warning/[0.08] px-2.5 py-2 text-[11px] text-warning">
+              Voice labels may change during mixed-audio meetings. Custom names are best-effort notes only.
+            </p>
+          ) : null}
           {speakers.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">
               {enabled
@@ -210,7 +227,7 @@ export function ParticipantsPanel({
               </div>
 
               <p className="mt-1 font-mono text-[10px] text-muted-foreground">
-                {speaker.segments} segment{speaker.segments === 1 ? "" : "s"} · id {speaker.id}
+                {speaker.segments} segment{speaker.segments === 1 ? "" : "s"} · temporary cluster {speaker.id}
               </p>
             </div>
           ))}
