@@ -62,6 +62,12 @@ import {
   type RemoteSpeaker,
   type SpeakerRole,
 } from "@/lib/speakers";
+import {
+  CAPABILITY_LABELS,
+  capabilityForSource,
+  speakerSeparationStatus,
+  type ParticipantCapability,
+} from "@/lib/participant-source";
 
 /** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
 export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
