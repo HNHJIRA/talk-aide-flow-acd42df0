@@ -87,6 +87,7 @@ function LiveSession() {
   const [multiParticipant, setMultiParticipant] = useState(true);
   const [autoAssignFirstSpeaker, setAutoAssignFirstSpeaker] = useState(true);
   const [remoteRoutingMode, setRemoteRoutingMode] = useState<RemoteRoutingMode>("speaker_aware");
+  const [autoFallbackAllRemote, setAutoFallbackAllRemote] = useState(true);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const caps = detectCapabilities();
 
