@@ -2415,6 +2415,15 @@ export function useCopilotSession(opts: Options) {
     latencyHistory,
     aiCall,
 
+    /* remote speaker roster */
+    speakers,
+    setSpeakerRole,
+    setPrimarySpeaker,
+    renameSpeaker,
+    diarizationNote,
+
+
+
     companionHealth,
     companionState,
     connectMicrophone,
