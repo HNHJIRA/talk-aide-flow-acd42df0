@@ -65,9 +65,15 @@ import {
 import {
   CAPABILITY_LABELS,
   capabilityForSource,
+  identityConfidence as getIdentityConfidence,
   speakerSeparationStatus,
   type ParticipantCapability,
 } from "@/lib/participant-source";
+import {
+  analyzeSpeakerStability,
+  type SpeakerObservation,
+  type SpeakerStability,
+} from "@/lib/speaker-stability";
 
 /** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
 export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
@@ -200,6 +206,15 @@ export type DebugInfo = {
   requestedDiarizer: string;
   resolvedDiarizer: string;
   diarizerVersion: string;
+  sourceCapability: string;
+  identityConfidence: string;
+  speakerLabelStability: string;
+  speakerDistribution: string;
+  recentLabelSwitches: number;
+  possibleLabelDrift: string;
+  labelDriftEvents: number;
+  currentRoutingMode: string;
+  autoFallbackReason: string;
   remoteAudioSeconds: number;
   remoteSpeechSeconds: number;
   remoteRms: number;
@@ -361,6 +376,15 @@ export function useCopilotSession(opts: Options) {
   const [capturedRemoteWav, setCapturedRemoteWav] = useState<Blob | null>(null);
   const [prerecordedControl, setPrerecordedControl] = useState("not run");
   const lastDiarizedSpeaker = useRef<number | null>(null);
+  const speakerObservations = useRef<SpeakerObservation[]>([]);
+  const speakerStabilityRef = useRef<SpeakerStability>({
+    unstable: false,
+    reason: null,
+    distribution: {},
+    recentSwitches: 0,
+  });
+  const [speakerStability, setSpeakerStability] = useState(speakerStabilityRef.current);
+  const labelDriftEvents = useRef(0);
   /**
    * Routing mode actually in force on the hot path. Equals the user's choice
    * unless auto-fallback has demoted speaker-aware routing to All Remote.
@@ -470,6 +494,20 @@ export function useCopilotSession(opts: Options) {
         current = word.speaker;
       }
       lastDiarizedSpeaker.current = current;
+      const at = Date.now();
+      speakerObservations.current = [
+        ...speakerObservations.current.filter((item) => at - item.at <= 60_000),
+        { at, wordsBySpeaker: additions, switches: changes },
+      ];
+      const nextStability = analyzeSpeakerStability(speakerObservations.current, at);
+      if (nextStability.unstable && !speakerStabilityRef.current.unstable) {
+        labelDriftEvents.current += 1;
+      }
+      speakerStabilityRef.current = nextStability;
+      setSpeakerStability(nextStability);
+      if (nextStability.unstable && optsRef.current.autoFallbackAllRemote) {
+        effectiveRoutingModeRef.current = "all_remote";
+      }
       setDiarizationDebug((prev) => ({
         ...prev,
         active: prev.active || frame.uniqueSpeakerIds.length > 0,
@@ -1710,6 +1748,8 @@ export function useCopilotSession(opts: Options) {
           ? resolveSpeaker(result.speakerId, result.text)
           : null;
       const routingMode = effectiveRoutingModeRef.current;
+      const labelsTrusted = routingMode === "speaker_aware" && !speakerStabilityRef.current.unstable;
+      const attributedLabel = roster && labelsTrusted ? speakerTag(roster) : "Remote participant";
       if (roster && routingMode === "speaker_aware" && !roleIsHeard(roster.role)) {
         // Explicitly ignored participant: not transcribed into the session, not
         // remembered, and it can never trigger an answer.
@@ -1872,7 +1912,7 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({
         lastTranscriptSource: isRemote
-          ? `${source} (${roster ? speakerTag(roster) : optsRef.current.multiParticipant ? "REMOTE UNKNOWN" : "INTERVIEWER"})`
+          ? `${source} (${roster ? attributedLabel : optsRef.current.multiParticipant ? "REMOTE UNKNOWN" : "INTERVIEWER"})`
           : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
@@ -1889,7 +1929,7 @@ export function useCopilotSession(opts: Options) {
         source,
         speaker,
         speakerId: roster?.id ?? null,
-        speakerLabel: roster?.label ?? null,
+        speakerLabel: isRemote ? attributedLabel : null,
         speakerRole: roster?.role ?? null,
         text: result.text,
         isFinal: true,
@@ -1911,15 +1951,13 @@ export function useCopilotSession(opts: Options) {
         speaker === "interviewer" ? "interviewer" : speaker === "test" ? "test" : "candidate",
         result.text,
         roster
-          ? { speakerId: roster.id, speakerLabel: roster.label, speakerRole: roster.role }
+          ? { speakerId: roster.id, speakerLabel: attributedLabel, speakerRole: labelsTrusted ? roster.role : "unassigned" }
           : {},
       );
       memoryPending.current.push(
         `${
           speaker === "interviewer"
-            ? roster
-              ? roster.label.toUpperCase()
-              : "CLIENT"
+            ? attributedLabel.toUpperCase()
             : speaker === "test"
               ? "TEST"
               : "ME"
@@ -2498,6 +2536,39 @@ export function useCopilotSession(opts: Options) {
 
   useEffect(() => teardown, [teardown]);
 
+  /* ---------------- source capability + routing safety ---------------- */
+
+  const participantCapability: ParticipantCapability = capabilityForSource(
+    remoteSourceRef.current === "zoom_desktop" ? "zoom_desktop" : "remote_meeting",
+    opts.multiParticipant,
+  );
+  const identityConfidence = getIdentityConfidence(participantCapability);
+  const separatedVoices = diarizationDebug.uniqueIds.length;
+  const speakerAwareAvailable = separatedVoices >= 2;
+  const remoteSpeakerWarning =
+    opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && separatedVoices <= 1;
+  const instabilityFallback =
+    participantCapability !== "deterministic_participant_audio" && speakerStability.unstable;
+  const autoFallbackReason =
+    opts.remoteRoutingMode === "speaker_aware" && opts.autoFallbackAllRemote
+      ? instabilityFallback
+        ? "speaker label instability"
+        : remoteSpeakerWarning
+          ? "voices not separated"
+          : null
+      : null;
+  const autoFallbackActive = autoFallbackReason !== null;
+  const effectiveRoutingMode: RemoteRoutingMode = autoFallbackActive
+    ? "all_remote"
+    : opts.remoteRoutingMode;
+  effectiveRoutingModeRef.current = effectiveRoutingMode;
+  const speakerDistribution = Object.entries(speakerStability.distribution).length
+    ? Object.entries(speakerStability.distribution)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([id, share]) => `${id}: ${Math.round(share * 100)}%`)
+        .join(" | ")
+    : "none";
+
   const debug: DebugInfo = useMemo(
     () => ({
       micTrack: micStream.current?.getAudioTracks()[0]?.readyState ?? "none",
@@ -2638,6 +2709,17 @@ export function useCopilotSession(opts: Options) {
       requestedDiarizer: diarizationDebug.config?.requestedDiarizer ?? "not requested",
       resolvedDiarizer: diarizationDebug.resolvedDiarizer ?? "not reported by service",
       diarizerVersion: diarizationDebug.diarizerVersion ?? "not reported by service",
+      sourceCapability: participantCapability.toUpperCase(),
+      identityConfidence,
+      speakerLabelStability: speakerStability.unstable ? "unstable" : "stable",
+      speakerDistribution,
+      recentLabelSwitches: speakerStability.recentSwitches,
+      possibleLabelDrift: speakerStability.unstable
+        ? `yes — ${speakerStability.reason ?? "distribution changed"}`
+        : "no",
+      labelDriftEvents: labelDriftEvents.current,
+      currentRoutingMode: effectiveRoutingMode === "all_remote" ? "All Remote" : effectiveRoutingMode === "manual" ? "Manual trigger" : "Speaker-aware (best effort)",
+      autoFallbackReason: autoFallbackReason ?? "none",
       remoteAudioSeconds: remoteAudioMetrics.audioSeconds,
       remoteSpeechSeconds: remoteAudioMetrics.speechSeconds,
       remoteRms: remoteAudioMetrics.rms,
@@ -2697,29 +2779,14 @@ export function useCopilotSession(opts: Options) {
       remoteRecording,
       capturedRemoteWav,
       prerecordedControl,
+      participantCapability,
+      identityConfidence,
+      speakerStability,
+      speakerDistribution,
+      effectiveRoutingMode,
+      autoFallbackReason,
     ],
   );
-
-  /* ---------------- source capability + auto-fallback ---------------- */
-
-  // Browser tab audio and the companion tap are both MIXED streams: identity is
-  // only ever best-effort diarization, never a deterministic participant id.
-  const participantCapability: ParticipantCapability = capabilityForSource(
-    remoteSourceRef.current === "zoom_desktop" ? "zoom_desktop" : "remote_meeting",
-    opts.multiParticipant,
-  );
-  const separatedVoices = diarizationDebug.uniqueIds.length;
-  const speakerAwareAvailable = separatedVoices >= 2;
-  const remoteSpeakerWarning =
-    opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && separatedVoices <= 1;
-  const autoFallbackActive =
-    opts.remoteRoutingMode === "speaker_aware" &&
-    opts.autoFallbackAllRemote &&
-    remoteSpeakerWarning;
-  const effectiveRoutingMode: RemoteRoutingMode = autoFallbackActive
-    ? "all_remote"
-    : opts.remoteRoutingMode;
-  effectiveRoutingModeRef.current = effectiveRoutingMode;
 
   return {
     sessionState,
@@ -2750,6 +2817,9 @@ export function useCopilotSession(opts: Options) {
     remoteSpeakerWarning,
     participantCapability,
     capabilityLabel: CAPABILITY_LABELS[participantCapability],
+    identityConfidence,
+    speakerLabelStability: speakerStability.unstable ? "unstable" as const : "stable" as const,
+    autoFallbackReason,
     separatedVoices,
     speakerAwareAvailable,
     autoFallbackActive,
