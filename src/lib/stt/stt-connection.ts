@@ -120,8 +120,10 @@ export class SttConnection {
       utterance_end_ms: this.opts.lowLatency ? "1000" : "1000",
       language: this.opts.language ?? "en",
     });
+    if (this.opts.diarize) params.set("diarize", "true");
     return `${STANDARD_URL}?${params.toString()}`;
   }
+
 
   private async connect() {
     if (this.closedByUser) return;
