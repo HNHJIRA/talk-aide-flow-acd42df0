@@ -44,6 +44,15 @@ import {
   type CompanionState,
 } from "@/lib/companion/companion-client";
 
+import {
+  makeSpeaker,
+  roleDrivesAnswers,
+  roleIsHeard,
+  speakerTag,
+  type RemoteSpeaker,
+  type SpeakerRole,
+} from "@/lib/speakers";
+
 /** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
 export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
 
@@ -64,10 +73,16 @@ export type Segment = {
   id: string;
   source: SourceKind;
   speaker: Speaker;
+  /** Diarized remote speaker index, when multi-participant routing is on. */
+  speakerId: string | null;
+  /** Roster label at the time the line was heard. */
+  speakerLabel: string | null;
+  speakerRole: SpeakerRole | null;
   text: string;
   isFinal: boolean;
   at: number;
 };
+
 
 export type QuestionItem = {
   /** Stable client-side turn id; the row id arrives later and never blocks the UI. */
