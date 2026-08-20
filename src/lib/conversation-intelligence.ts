@@ -303,7 +303,15 @@ export type MeetingTurn = {
 } & TurnAttribution;
 
 
-export type MeetingFact = { label: string; value: string; saidBy: "client" | "candidate"; at: number };
+export type MeetingFact = {
+  label: string;
+  value: string;
+  saidBy: "client" | "candidate";
+  at: number;
+  /** Which remote participant said it, when diarization is active. */
+  speakerLabel?: string | null;
+};
+
 export type MeetingClaim = { topic: string; claim: string; at: number };
 
 /** Numeric / concrete statements worth remembering verbatim. */
