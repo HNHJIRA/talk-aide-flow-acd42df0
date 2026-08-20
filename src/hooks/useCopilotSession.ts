@@ -326,6 +326,79 @@ export function useCopilotSession(opts: Options) {
     [],
   );
 
+  /* ---------------- remote speaker roster ---------------- */
+
+  const publishRoster = useCallback(() => {
+    setSpeakers(
+      [...speakersRef.current.values()].sort((a, b) => a.firstHeardAt - b.firstHeardAt),
+    );
+  }, []);
+
+  /**
+   * Look a diarized speaker up, registering it on first hearing. Deterministic
+   * and synchronous: no model call, no network, nothing that can add latency.
+   *
+   * Speaker index 0 is NEVER assumed to be the interviewer — a brand new voice is
+   * "unassigned" and, unless the user opted into auto-assigning the first voice
+   * heard, it cannot trigger an answer until a role is chosen.
+   */
+  const resolveSpeaker = useCallback(
+    (rawId: string | null, text: string): RemoteSpeaker => {
+      const id = rawId ?? "single";
+      const existing = speakersRef.current.get(id);
+      if (existing) {
+        existing.lastHeardAt = Date.now();
+        if (text) existing.lastText = text.slice(0, 160);
+        return existing;
+      }
+      const first = speakersRef.current.size === 0;
+      // Without diarization there is exactly one remote voice: it is the interviewer.
+      const role: SpeakerRole = !diarizationActive.current
+        ? "primary_interviewer"
+        : first && optsRef.current.autoAssignFirstSpeaker
+          ? "primary_interviewer"
+          : "unassigned";
+      const speaker = makeSpeaker(id, role);
+      if (text) speaker.lastText = text.slice(0, 160);
+      speakersRef.current.set(id, speaker);
+      publishRoster();
+      return speaker;
+    },
+    [publishRoster],
+  );
+
+  const setSpeakerRole = useCallback(
+    (id: string, role: SpeakerRole) => {
+      const speaker = speakersRef.current.get(id);
+      if (!speaker) return;
+      speaker.role = role;
+      publishRoster();
+    },
+    [publishRoster],
+  );
+
+  const renameSpeaker = useCallback(
+    (id: string, label: string) => {
+      const speaker = speakersRef.current.get(id);
+      if (!speaker) return;
+      speaker.label = label.trim() || speaker.label;
+      publishRoster();
+    },
+    [publishRoster],
+  );
+
+  /** Exactly one primary interviewer at a time. */
+  const setPrimarySpeaker = useCallback(
+    (id: string) => {
+      speakersRef.current.forEach((s) => {
+        if (s.role === "primary_interviewer") s.role = "interviewer";
+      });
+      const speaker = speakersRef.current.get(id);
+      if (speaker) speaker.role = "primary_interviewer";
+      publishRoster();
+    },
+    [publishRoster],
+  );
 
 
   const pushError = useCallback((message: string) => {
