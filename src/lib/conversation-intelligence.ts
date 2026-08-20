@@ -372,9 +372,16 @@ export class MeetingMemory {
   recordFact(fact: MeetingFact & { _v?: string }) {
     const existing = this.facts.findIndex((f) => f.label === fact.label && f.saidBy === fact.saidBy);
     if (existing >= 0) this.facts.splice(existing, 1);
-    this.facts.push({ label: fact.label, value: fact.value, saidBy: fact.saidBy, at: fact.at });
+    this.facts.push({
+      label: fact.label,
+      value: fact.value,
+      saidBy: fact.saidBy,
+      at: fact.at,
+      speakerLabel: fact.speakerLabel ?? null,
+    });
     if (this.facts.length > 40) this.facts = this.facts.slice(-40);
   }
+
 
   recordCorrections(corrections: Correction[]) {
     if (!corrections.length) return;
