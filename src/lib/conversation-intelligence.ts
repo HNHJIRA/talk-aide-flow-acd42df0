@@ -287,11 +287,21 @@ export function resolveQuestion(question: string, topic: string): ResolvedQuesti
  * 4. MEETING MEMORY
  * ============================================================ */
 
+export type TurnAttribution = {
+  /** Deepgram diarization index for remote speech, when available. */
+  speakerId?: string | null;
+  /** Human label from the roster ("Sarah", "Speaker 2"). */
+  speakerLabel?: string | null;
+  /** Assigned role: primary_interviewer / interviewer / other / ignore. */
+  speakerRole?: string | null;
+};
+
 export type MeetingTurn = {
   speaker: "interviewer" | "candidate" | "test";
   text: string;
   at: number;
-};
+} & TurnAttribution;
+
 
 export type MeetingFact = { label: string; value: string; saidBy: "client" | "candidate"; at: number };
 export type MeetingClaim = { topic: string; claim: string; at: number };
