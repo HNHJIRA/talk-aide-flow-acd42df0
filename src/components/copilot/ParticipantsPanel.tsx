@@ -30,6 +30,14 @@ type Props = {
   onSetPrimary: (id: string) => void;
   onRename: (id: string, label: string) => void;
   note: string;
+  /** Honest statement of what the audio source itself can deliver. */
+  sourceLabel: string;
+  capabilityLabel: string;
+  separationStatus: string;
+  speakerAwareAvailable: boolean;
+  autoFallbackEnabled: boolean;
+  onAutoFallbackChange: (value: boolean) => void;
+  autoFallbackActive: boolean;
 };
 
 const ROLE_TONE: Record<SpeakerRole, string> = {
