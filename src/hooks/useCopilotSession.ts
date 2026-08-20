@@ -1579,8 +1579,13 @@ export function useCopilotSession(opts: Options) {
           // logical turn if the previous one is already resolved.
           if (drivesDetection) {
             const prev = turnRef.current;
-            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn();
+            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn(roster);
             const turn = currentTurn();
+            if (roster && !turn.speakerKey) {
+              turn.speakerKey = roster.id;
+              turn.speakerLabel = roster.label;
+              turn.speakerRole = roster.role;
+            }
             if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
           }
           return;
@@ -1630,7 +1635,7 @@ export function useCopilotSession(opts: Options) {
             pending.decideTimer = null;
             turnStats.current.merged += 1;
           }
-          const turn = activeTurn(result.text);
+          const turn = activeTurn(result.text, roster);
           turn.timer.mark("sttFirstInterim");
           lastRemoteVoiceAt.current = performance.now();
           turn.lastSpeechAt = performance.now();
@@ -1741,7 +1746,7 @@ export function useCopilotSession(opts: Options) {
 
       if (!drivesDetection) return;
 
-      const turn = activeTurn(result.text);
+      const turn = activeTurn(result.text, roster);
       if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
