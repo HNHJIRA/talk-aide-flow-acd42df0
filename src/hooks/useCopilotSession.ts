@@ -355,6 +355,11 @@ export function useCopilotSession(opts: Options) {
   const [capturedRemoteWav, setCapturedRemoteWav] = useState<Blob | null>(null);
   const [prerecordedControl, setPrerecordedControl] = useState("not run");
   const lastDiarizedSpeaker = useRef<number | null>(null);
+  /**
+   * Routing mode actually in force on the hot path. Equals the user's choice
+   * unless auto-fallback has demoted speaker-aware routing to All Remote.
+   */
+  const effectiveRoutingModeRef = useRef<RemoteRoutingMode>(opts.remoteRoutingMode);
 
   /* --- desktop companion --- */
   const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
