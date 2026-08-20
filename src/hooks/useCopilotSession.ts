@@ -61,13 +61,7 @@ export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
 
 export type SourceStatus = "disconnected" | "connecting" | "active" | "silent" | "error";
 export type SessionState =
-  | "idle"
-  | "ready"
-  | "listening"
-  | "paused"
-  | "ending"
-  | "completed"
-  | "error";
+  "idle" | "ready" | "listening" | "paused" | "ending" | "completed" | "error";
 
 export type MicMode = "candidate" | "test" | "fallback";
 export type Speaker = "interviewer" | "candidate" | "test";
@@ -86,7 +80,6 @@ export type Segment = {
   at: number;
 };
 
-
 export type QuestionItem = {
   /** Stable client-side turn id; the row id arrives later and never blocks the UI. */
   id: string;
@@ -103,8 +96,6 @@ export type QuestionItem = {
   askedBy: string | null;
   askedByRole: SpeakerRole | null;
 };
-
-
 
 export type DebugInfo = {
   micTrack: string;
@@ -192,7 +183,6 @@ export type DebugInfo = {
   unknownSpeakerWords: number;
   rosterEntriesCreated: number;
 
-
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
 
@@ -221,7 +211,6 @@ const TURN_SHORT_GRACE_MS = 350;
 const TURN_INCOMPLETE_GRACE_MS = 700;
 const TURN_HARD_COMMIT_MS = 1000;
 const LATE_CONTINUATION_MS = 1800;
-
 
 const normalize = (text: string) =>
   text
@@ -257,7 +246,11 @@ type Options = {
    */
   micMode: MicMode;
   fallbackAutoDetect: boolean;
-  micConstraints: { echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean };
+  micConstraints: {
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    autoGainControl: boolean;
+  };
   /**
    * Multi-participant routing. When on, the remote stream is diarized and every
    * remote voice becomes a roster entry the user assigns a role to. Answers only
@@ -271,7 +264,6 @@ type Options = {
    */
   autoAssignFirstSpeaker: boolean;
 };
-
 
 export function useCopilotSession(opts: Options) {
   const { sessionId } = opts;
@@ -287,7 +279,11 @@ export function useCopilotSession(opts: Options) {
   const [localStt, setLocalStt] = useState<SttState>("idle");
   const [remoteStt, setRemoteStt] = useState<SttState>("idle");
   const [segments, setSegments] = useState<Segment[]>([]);
-  const [interim, setInterim] = useState<{ microphone: string; remote_meeting: string; zoom_desktop: string }>({
+  const [interim, setInterim] = useState<{
+    microphone: string;
+    remote_meeting: string;
+    zoom_desktop: string;
+  }>({
     microphone: "",
     remote_meeting: "",
     zoom_desktop: "",
@@ -320,8 +316,6 @@ export function useCopilotSession(opts: Options) {
   });
   const knownRemoteSpeakerIds = useRef<Set<number>>(new Set());
   const lastDiarizedSpeaker = useRef<number | null>(null);
-
-
 
   /* --- desktop companion --- */
   const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
@@ -366,9 +360,7 @@ export function useCopilotSession(opts: Options) {
   /* ---------------- remote speaker roster ---------------- */
 
   const publishRoster = useCallback(() => {
-    setSpeakers(
-      [...speakersRef.current.values()].sort((a, b) => a.firstHeardAt - b.firstHeardAt),
-    );
+    setSpeakers([...speakersRef.current.values()].sort((a, b) => a.firstHeardAt - b.firstHeardAt));
   }, []);
 
   /**
@@ -430,14 +422,19 @@ export function useCopilotSession(opts: Options) {
       setDiarizationDebug((prev) => ({
         ...prev,
         active: prev.active || frame.uniqueSpeakerIds.length > 0,
-        rawWords: JSON.stringify(frame.words.map(({ word, speaker }) => ({ word, speaker })), null, 2),
-        uniqueIds: [...new Set([...prev.uniqueIds, ...frame.uniqueSpeakerIds])].sort((a, b) => a - b),
+        rawWords: JSON.stringify(
+          frame.words.map(({ word, speaker }) => ({ word, speaker })),
+          null,
+          2,
+        ),
+        uniqueIds: [...new Set([...prev.uniqueIds, ...frame.uniqueSpeakerIds])].sort(
+          (a, b) => a - b,
+        ),
         currentSpeaker: current,
         wordsBySpeaker: Object.fromEntries(
-          [...new Set([...Object.keys(prev.wordsBySpeaker), ...Object.keys(additions)])].map((id) => [
-            id,
-            (prev.wordsBySpeaker[id] ?? 0) + (additions[id] ?? 0),
-          ]),
+          [...new Set([...Object.keys(prev.wordsBySpeaker), ...Object.keys(additions)])].map(
+            (id) => [id, (prev.wordsBySpeaker[id] ?? 0) + (additions[id] ?? 0)],
+          ),
         ),
         speakerChanges: prev.speakerChanges + changes,
         unknownWords: prev.unknownWords + frame.missingSpeakerWords,
@@ -480,7 +477,6 @@ export function useCopilotSession(opts: Options) {
     [publishRoster],
   );
 
-
   const pushError = useCallback((message: string) => {
     setErrors((prev) => (prev.includes(message) ? prev : [...prev.slice(-4), message]));
   }, []);
@@ -494,7 +490,12 @@ export function useCopilotSession(opts: Options) {
    * waits for this promise; a failed write degrades history, not latency.
    */
   const persistSegment = useCallback(
-    async (segment: Segment, confidence: number | null, startMs: number | null, endMs: number | null) => {
+    async (
+      segment: Segment,
+      confidence: number | null,
+      startMs: number | null,
+      endMs: number | null,
+    ) => {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) return null;
       const { data, error } = await supabase
@@ -526,7 +527,13 @@ export function useCopilotSession(opts: Options) {
   const questionRowIds = useRef(new Map<string, Promise<string | null>>());
 
   const persistQuestion = useCallback(
-    (clientId: string, question: string, category: string, confidence: number, segmentId: string | null) => {
+    (
+      clientId: string,
+      question: string,
+      category: string,
+      confidence: number,
+      segmentId: string | null,
+    ) => {
       const promise = (async () => {
         const { data: auth } = await supabase.auth.getUser();
         if (!auth.user) return null;
@@ -751,9 +758,6 @@ export function useCopilotSession(opts: Options) {
     turn.specTimer = null;
   }, []);
 
-
-
-
   const currentTurn = useCallback(() => {
     const turn = turnRef.current;
     if (!turn || turn.status === "completed" || turn.status === "cancelled") return newTurn();
@@ -811,7 +815,6 @@ export function useCopilotSession(opts: Options) {
     // One entry per turn: later paints of the same turn replace the earlier one.
     setLatencyHistory((prev) => [wf, ...prev.filter((h) => h.turnId !== wf.turnId)].slice(0, 8));
   }, []);
-
 
   /**
    * LIVE answer path. Can run in two modes:
@@ -871,7 +874,6 @@ export function useCopilotSession(opts: Options) {
         ]);
       }
       timer.contextPrefetch = contextKey ? "hit" : turn.prefetch ? "miss" : "none";
-
 
       // Keep the live prompt small on purpose: the caps in copilot.server are
       // maximums, these are the targets for the first automatic answer.
@@ -963,7 +965,6 @@ export function useCopilotSession(opts: Options) {
         if (!Number.isNaN(preludeMs)) timer.serverTtftMs = preludeMs;
         if (res.headers.get("X-IC-Context") === "hit") timer.contextPrefetch = "hit";
 
-
         if (!res.ok || !res.body) {
           const detail = await res.text().catch(() => "");
           if (speculative && !spec?.promoted) {
@@ -979,7 +980,9 @@ export function useCopilotSession(opts: Options) {
                 : `AI request failed: ${detail.slice(0, 140) || res.status}`;
           pushError(message);
           patchDiag({ aiState: "error" });
-          setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)));
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === turn.id ? { ...q, status: "error" } : q)),
+          );
           turn.status = "completed";
           return;
         }
@@ -1037,7 +1040,8 @@ export function useCopilotSession(opts: Options) {
               if (firstToken === null) {
                 timer.mark("aiFirstToken");
                 firstToken = Math.round(
-                  (timer.marks.aiFirstToken ?? performance.now()) - (timer.marks.aiRequestStart ?? 0),
+                  (timer.marks.aiFirstToken ?? performance.now()) -
+                    (timer.marks.aiRequestStart ?? 0),
                 );
               }
               answer += delta;
@@ -1053,7 +1057,6 @@ export function useCopilotSession(opts: Options) {
             }
           }
         }
-
 
         if (spec && !spec.promoted) {
           // Stream finished while still unconfirmed: hold the text, promotion
@@ -1122,7 +1125,9 @@ export function useCopilotSession(opts: Options) {
           }
           turn.status = "completed";
           patchDiag({ aiState: "stopped" });
-          setQuestions((prev) => prev.map((q) => (q.id === turn.id ? { ...q, status: "stopped" } : q)));
+          setQuestions((prev) =>
+            prev.map((q) => (q.id === turn.id ? { ...q, status: "stopped" } : q)),
+          );
           return;
         }
         turn.status = "completed";
@@ -1185,7 +1190,9 @@ export function useCopilotSession(opts: Options) {
                 : `AI request failed: ${detail.slice(0, 140) || res.status}`;
           pushError(message);
           patchDiag({ aiState: "error" });
-          setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)));
+          setQuestions((prev) =>
+            prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)),
+          );
           return;
         }
 
@@ -1219,7 +1226,9 @@ export function useCopilotSession(opts: Options) {
               scheduleFlush(() =>
                 setQuestions((prev) =>
                   prev.map((q) =>
-                    q.dbId === questionId ? { ...q, answer: snapshot, firstTokenMs: firstToken } : q,
+                    q.dbId === questionId
+                      ? { ...q, answer: snapshot, firstTokenMs: firstToken }
+                      : q,
                   ),
                 ),
               );
@@ -1252,7 +1261,10 @@ export function useCopilotSession(opts: Options) {
                 : q,
             ),
           );
-          await supabase.from("detected_questions").update({ status: "answered" }).eq("id", questionId);
+          await supabase
+            .from("detected_questions")
+            .update({ status: "answered" })
+            .eq("id", questionId);
           patchDiag({ aiState: "answered" });
         } else {
           setQuestions((prev) =>
@@ -1262,12 +1274,16 @@ export function useCopilotSession(opts: Options) {
       } catch (error) {
         if ((error as Error).name === "AbortError") {
           patchDiag({ aiState: "stopped" });
-          setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "stopped" } : q)));
+          setQuestions((prev) =>
+            prev.map((q) => (q.dbId === questionId ? { ...q, status: "stopped" } : q)),
+          );
           return;
         }
         patchDiag({ aiState: "error" });
         pushError(error instanceof Error ? error.message : "Answer generation failed.");
-        setQuestions((prev) => prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)));
+        setQuestions((prev) =>
+          prev.map((q) => (q.dbId === questionId ? { ...q, status: "error" } : q)),
+        );
       }
     },
     [sessionId, pushError, patchDiag, scheduleFlush],
@@ -1324,7 +1340,6 @@ export function useCopilotSession(opts: Options) {
                 pinned: false,
                 askedBy: turn.speakerLabel,
                 askedByRole: turn.speakerRole,
-
               },
               ...prev,
             ],
@@ -1335,7 +1350,11 @@ export function useCopilotSession(opts: Options) {
         // creating a second one.
         void (async () => {
           const dbId = await questionRowIds.current.get(turn.id);
-          if (dbId) await supabase.from("detected_questions").update({ question_text: question }).eq("id", dbId);
+          if (dbId)
+            await supabase
+              .from("detected_questions")
+              .update({ question_text: question })
+              .eq("id", dbId);
         })();
       } else {
         void persistQuestion(turn.id, question, category, confidence, turn.segmentId);
@@ -1407,8 +1426,6 @@ export function useCopilotSession(opts: Options) {
     [clearTurnTimers],
   );
 
-
-
   /**
    * Decide a completed turn. The local gate answers the vast majority instantly;
    * only ambiguous utterances pay for the AI classifier round trip.
@@ -1424,7 +1441,6 @@ export function useCopilotSession(opts: Options) {
         return;
       }
       turn.hardCommitted = opts.hard === true;
-
 
       turn.timer.mark("gateStart");
       const verdict = fastQuestionGate(text);
@@ -1612,9 +1628,6 @@ export function useCopilotSession(opts: Options) {
     [currentTurn, newTurn, reopenTurn, clearTurnTimers],
   );
 
-
-
-
   const handleResult = useCallback(
     (
       source: SourceKind,
@@ -1647,12 +1660,14 @@ export function useCopilotSession(opts: Options) {
         // Explicitly ignored participant: not transcribed into the session, not
         // remembered, and it can never trigger an answer.
         routingStats.current.ignored += 1;
-        if (result.isFinal) patchDiag({ lastTranscriptSource: `${source} (${roster.label} — ignored)` });
+        if (result.isFinal)
+          patchDiag({ lastTranscriptSource: `${source} (${roster.label} — ignored)` });
         return;
       }
-      const remoteMayAnswer = isRemote && optsRef.current.multiParticipant
-        ? Boolean(roster && roleDrivesAnswers(roster.role))
-        : true;
+      const remoteMayAnswer =
+        isRemote && optsRef.current.multiParticipant
+          ? Boolean(roster && roleDrivesAnswers(roster.role))
+          : true;
       if (roster && !remoteMayAnswer) routingStats.current.unassigned += 1;
 
       // Only an interviewer-side stream drives the low-latency machine; Helper mode
@@ -1663,14 +1678,14 @@ export function useCopilotSession(opts: Options) {
           mode === "test" ||
           (mode === "fallback" && optsRef.current.fallbackAutoDetect));
 
-
       if (!result.isFinal) {
         if (result.event === "start_of_turn") {
           // Deepgram Flux says a brand-new speaking turn began: only start a new
           // logical turn if the previous one is already resolved.
           if (drivesDetection) {
             const prev = turnRef.current;
-            if (prev && (prev.status === "completed" || prev.status === "cancelled")) newTurn(roster);
+            if (prev && (prev.status === "completed" || prev.status === "cancelled"))
+              newTurn(roster);
             const turn = currentTurn();
             if (roster && !turn.speakerKey) {
               turn.speakerKey = roster.id;
@@ -1774,7 +1789,6 @@ export function useCopilotSession(opts: Options) {
         return;
       }
 
-
       setInterim((prev) => ({ ...prev, [source]: "" }));
 
       const norm = normalize(result.text);
@@ -1799,7 +1813,7 @@ export function useCopilotSession(opts: Options) {
       patchDiag({
         lastTranscriptSource: isRemote
           ? `${source} (${roster ? speakerTag(roster) : optsRef.current.multiParticipant ? "REMOTE UNKNOWN" : "INTERVIEWER"})`
-            : speaker === "test"
+          : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
       });
@@ -1851,9 +1865,9 @@ export function useCopilotSession(opts: Options) {
               : "ME"
         }: ${result.text}`,
       );
-      if (memoryPending.current.length > 60) memoryPending.current = memoryPending.current.slice(-60);
+      if (memoryPending.current.length > 60)
+        memoryPending.current = memoryPending.current.slice(-60);
       syncMeetingMemory();
-
 
       if (!drivesDetection) return;
 
@@ -1955,10 +1969,7 @@ export function useCopilotSession(opts: Options) {
       scheduleSpeculation,
       streamLiveAnswer,
     ],
-
   );
-
-
 
   /** Which remote capture currently feeds the single remote Deepgram socket. */
   const remoteSourceRef = useRef<Exclude<SourceKind, "microphone">>("remote_meeting");
@@ -1992,11 +2003,7 @@ export function useCopilotSession(opts: Options) {
         onResult: (result) =>
           handleResult(
             isRemote ? remoteSourceRef.current : source,
-            isRemote
-              ? "interviewer"
-              : optsRef.current.micMode === "test"
-                ? "test"
-                : "candidate",
+            isRemote ? "interviewer" : optsRef.current.micMode === "test" ? "test" : "candidate",
             result,
           ),
         onProfile: (profile, detail) => {
@@ -2022,8 +2029,6 @@ export function useCopilotSession(opts: Options) {
     [handleResult, handleDiarizationFrame, pushError],
   );
 
-
-
   // Stable indirection so connect handlers defined above can open an STT socket
   // when a source is attached after the session is already live.
   const startSttRef = useRef<((source: SourceKind) => void) | null>(null);
@@ -2035,8 +2040,13 @@ export function useCopilotSession(opts: Options) {
     async (deviceId?: string) => {
       setMicStatus("connecting");
       try {
-        const { echoCancellation, noiseSuppression, autoGainControl } = optsRef.current.micConstraints;
-        const audio: MediaTrackConstraints = { echoCancellation, noiseSuppression, autoGainControl };
+        const { echoCancellation, noiseSuppression, autoGainControl } =
+          optsRef.current.micConstraints;
+        const audio: MediaTrackConstraints = {
+          echoCancellation,
+          noiseSuppression,
+          autoGainControl,
+        };
         if (deviceId) audio.deviceId = { exact: deviceId };
         const stream = await navigator.mediaDevices.getUserMedia({ audio });
 
@@ -2079,7 +2089,8 @@ export function useCopilotSession(opts: Options) {
       });
       const audioTracks = stream.getAudioTracks();
       patchDiag({
-        meetingTracksReturned: `${stream.getVideoTracks().length} video / ${audioTracks.length} audio` +
+        meetingTracksReturned:
+          `${stream.getVideoTracks().length} video / ${audioTracks.length} audio` +
           (audioTracks.length ? ` — "${audioTracks[0]!.label || "unlabelled"}"` : ""),
         meetingTrackLabel: audioTracks[0]?.label || "none",
       });
@@ -2186,7 +2197,6 @@ export function useCopilotSession(opts: Options) {
     setMeetingStatus("disconnected");
   }, []);
 
-
   /* ---------------- lifecycle ---------------- */
 
   const startListening = useCallback(async () => {
@@ -2204,7 +2214,6 @@ export function useCopilotSession(opts: Options) {
       .update({ status: "listening", started_at: new Date().toISOString() })
       .eq("id", sessionId);
   }, [startStt, sessionId]);
-
 
   const pause = useCallback(() => {
     // Only gates PCM delivery: the two Deepgram sockets stay open, so resuming
@@ -2249,7 +2258,6 @@ export function useCopilotSession(opts: Options) {
     setMicStatus("disconnected");
     setMeetingStatus("disconnected");
   }, [clearTurnTimers]);
-
 
   const endSession = useCallback(async () => {
     setSessionState("ending");
@@ -2300,10 +2308,12 @@ export function useCopilotSession(opts: Options) {
     );
     const target = questionsRef.current.find((q) => q.id === clientId);
     if (target?.answerId) {
-      await supabase.from("generated_answers").update({ is_pinned: next }).eq("id", target.answerId);
+      await supabase
+        .from("generated_answers")
+        .update({ is_pinned: next })
+        .eq("id", target.answerId);
     }
   }, []);
-
 
   /** Mic-only fallback: explicitly treat the last microphone utterance as an interviewer question. */
   const promoteLastMicSegment = useCallback(async () => {
@@ -2397,7 +2407,6 @@ export function useCopilotSession(opts: Options) {
       specAborted: turnStats.current.specAborted,
       gateRejected: turnStats.current.gateRejected,
 
-
       classifierCalls: turnStats.current.classifierCalls,
       turnId: turnView.id,
       turnSegments: turnView.segments,
@@ -2460,19 +2469,27 @@ export function useCopilotSession(opts: Options) {
         ? `${diarizationDebug.config.endpoint}?model=${diarizationDebug.config.model}&encoding=${diarizationDebug.config.encoding}&sample_rate=${diarizationDebug.config.sampleRate}&channels=${diarizationDebug.config.channels}&interim_results=${diarizationDebug.config.interimResults}&diarize=${diarizationDebug.config.diarizationRequested}`
         : "not connected",
       diarizationRequested: diarizationDebug.config?.diarizationRequested ? "yes" : "no",
-      diarizationActive: diarizationDebug.active ? "yes — word-level speaker IDs received" : "no raw speaker IDs received yet",
+      diarizationActive: diarizationDebug.active
+        ? "yes — word-level speaker IDs received"
+        : "no raw speaker IDs received yet",
       rawDiarizedWords: diarizationDebug.rawWords,
-      rawUniqueSpeakerIds: diarizationDebug.uniqueIds.length ? diarizationDebug.uniqueIds.join(", ") : "none",
+      rawUniqueSpeakerIds: diarizationDebug.uniqueIds.length
+        ? diarizationDebug.uniqueIds.join(", ")
+        : "none",
       rosterSpeakerIds: speakers.length ? speakers.map((speaker) => speaker.id).join(", ") : "none",
-      currentDiarizedSpeaker: diarizationDebug.currentSpeaker == null ? "REMOTE UNKNOWN" : String(diarizationDebug.currentSpeaker),
+      currentDiarizedSpeaker:
+        diarizationDebug.currentSpeaker == null
+          ? "REMOTE UNKNOWN"
+          : String(diarizationDebug.currentSpeaker),
       wordsBySpeaker: Object.entries(diarizationDebug.wordsBySpeaker).length
-        ? Object.entries(diarizationDebug.wordsBySpeaker).map(([id, count]) => `Speaker ${id}: ${count}`).join(" | ")
+        ? Object.entries(diarizationDebug.wordsBySpeaker)
+            .map(([id, count]) => `Speaker ${id}: ${count}`)
+            .join(" | ")
         : "none",
       speakerChangesDetected: diarizationDebug.speakerChanges,
       unknownSpeakerWords: diarizationDebug.unknownWords,
       rosterEntriesCreated: diarizationDebug.rosterEntriesCreated,
       companionState,
-
 
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
@@ -2549,8 +2566,6 @@ export function useCopilotSession(opts: Options) {
     renameSpeaker,
     diarizationNote,
 
-
-
     companionHealth,
     companionState,
     connectMicrophone,
@@ -2570,4 +2585,3 @@ export function useCopilotSession(opts: Options) {
     promoteLastMicSegment,
   };
 }
-

@@ -48,12 +48,14 @@ const COMPANION_STATUS: Record<string, string> = {
   stopped: "Stopped",
 };
 
-
 export const Route = createFileRoute("/_authenticated/session/$sessionId")({
   head: () => ({
     meta: [
       { title: "Live copilot — InterviewCopilot" },
-      { name: "description", content: "Live transcription, question detection and streaming resume-grounded answers." },
+      {
+        name: "description",
+        content: "Live transcription, question detection and streaming resume-grounded answers.",
+      },
       { property: "og:title", content: "Live copilot — InterviewCopilot" },
       { property: "og:description", content: "Your real-time interview room." },
       { property: "og:type", content: "website" },
@@ -102,7 +104,8 @@ function LiveSession() {
     staleTime: 60_000,
   });
 
-  const isManualPlatform = session?.meeting_platform === "manual" || session?.meeting_platform === "practice";
+  const isManualPlatform =
+    session?.meeting_platform === "manual" || session?.meeting_platform === "practice";
   const micOnlyFallback = isManualPlatform;
 
   const copilot = useCopilotSession({
@@ -162,9 +165,9 @@ function LiveSession() {
 
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
   const [forceTabFallback, setForceTabFallback] = useState(false);
-  const needsMeetingAudio = session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
+  const needsMeetingAudio =
+    session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
-
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -192,8 +195,6 @@ function LiveSession() {
     micLabel: micStatus === "active" ? (sttTestMode ? "Helper" : "Candidate") : "Mic off",
     questions,
   });
-
-
 
   const finish = async () => {
     await endSession();
@@ -224,7 +225,11 @@ function LiveSession() {
             status={STATUS_TONE[micStatus]}
             detail={micDeviceLabel || micStatus}
           />
-          <StatusDot label="Network" status={online ? "ok" : "error"} detail={online ? "" : "offline"} />
+          <StatusDot
+            label="Network"
+            status={online ? "ok" : "error"}
+            detail={online ? "" : "offline"}
+          />
           <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
         </div>
       </header>
@@ -253,7 +258,9 @@ function LiveSession() {
             <span
               className={cn(
                 "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                live ? "border-success/40 bg-success/10 text-success" : "border-border text-muted-foreground",
+                live
+                  ? "border-success/40 bg-success/10 text-success"
+                  : "border-border text-muted-foreground",
               )}
             >
               {live ? "Live" : sessionState === "paused" ? "Paused" : "Idle"}
@@ -342,9 +349,15 @@ function LiveSession() {
                   <p className="text-sm font-medium">{question.text}</p>
                   <div className="flex shrink-0 gap-1">
                     <Button size="icon" variant="ghost" onClick={() => void togglePin(question.id)}>
-                      <Pin className={cn("size-4", question.pinned && "fill-primary text-primary")} />
+                      <Pin
+                        className={cn("size-4", question.pinned && "fill-primary text-primary")}
+                      />
                     </Button>
-                    <Button size="icon" variant="ghost" onClick={() => void regenerate(question.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => void regenerate(question.id)}
+                    >
                       <RefreshCw className="size-4" />
                     </Button>
                   </div>
@@ -387,7 +400,14 @@ function LiveSession() {
               ["Deepgram (microphone)", debug.localStt],
               ["Deepgram (interviewer)", debug.remoteStt],
               ["Deepgram auth mode", stt?.mode ?? (stt?.problem ? "unavailable" : "…")],
-              ["Session mode", sttTestMode ? "HELPER MODE" : micOnlyFallback ? "mic-only fallback" : "dual source (production)"],
+              [
+                "Session mode",
+                sttTestMode
+                  ? "HELPER MODE"
+                  : micOnlyFallback
+                    ? "mic-only fallback"
+                    : "dual source (production)",
+              ],
               ["Microphone role", debug.micRole],
               ["Detection sources", debug.detectionSources],
               ["STT profile (interviewer)", debug.sttProfile],
@@ -402,13 +422,28 @@ function LiveSession() {
               ["Hard commits (silence deadline)", String(debug.hardCommits)],
               ["Late-continuation window", debug.lateWindowState],
               ["Late continuations detected", String(debug.lateContinuations)],
-              ["Turns reopened / answers superseded", `${debug.turnsReopened} / ${debug.answersSuperseded}`],
-              ["Segments merged / turns resumed", `${debug.segmentsMerged} / ${debug.turnsResumed}`],
+              [
+                "Turns reopened / answers superseded",
+                `${debug.turnsReopened} / ${debug.answersSuperseded}`,
+              ],
+              [
+                "Segments merged / turns resumed",
+                `${debug.segmentsMerged} / ${debug.turnsResumed}`,
+              ],
               ["Grace-window holds", String(debug.graceHolds)],
               ["Duplicate answers blocked", String(debug.duplicateAnswersBlocked)],
-              ["Speculative started / reused / aborted", `${debug.specStarted} / ${debug.specReused} / ${debug.specAborted}`],
-              ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
-              ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
+              [
+                "Speculative started / reused / aborted",
+                `${debug.specStarted} / ${debug.specReused} / ${debug.specAborted}`,
+              ],
+              [
+                "Speculative prep (done/cancelled)",
+                `${debug.speculativePrepared} / ${debug.speculativeCancelled}`,
+              ],
+              [
+                "Local gate rejects / AI classifier calls",
+                `${debug.gateRejected} / ${debug.classifierCalls}`,
+              ],
 
               ["— REMOTE DIARIZATION —", ""],
               ["Diarization enabled", debug.diarization],
@@ -427,7 +462,10 @@ function LiveSession() {
               ["Remote speakers", debug.remoteSpeakers],
               ["Answers routed from", debug.answersRoutedFrom],
               ["Current turn speaker", debug.turnSpeaker],
-              ["Routed / ignored / unassigned segments", `${debug.routedSegments} / ${debug.ignoredSegments} / ${debug.unassignedSegments}`],
+              [
+                "Routed / ignored / unassigned segments",
+                `${debug.routedSegments} / ${debug.ignoredSegments} / ${debug.unassignedSegments}`,
+              ],
               ["Turn splits on speaker change", String(debug.turnSpeakerSplits)],
 
               ["— CONVERSATION INTELLIGENCE —", ""],
@@ -438,8 +476,14 @@ function LiveSession() {
               ["Last correction", debug.lastCorrection],
               ["Sub-questions in turn", debug.subQuestions],
               ["Meeting turns remembered", String(debug.meetingTurnsRemembered)],
-              ["Facts / claims available", `${debug.meetingFactsAvailable} / ${debug.candidateClaimsAvailable}`],
-              ["Context packet (turns/facts/claims)", `${debug.packetRecentTurns} / ${debug.packetMeetingFacts} / ${debug.packetCandidateClaims}`],
+              [
+                "Facts / claims available",
+                `${debug.meetingFactsAvailable} / ${debug.candidateClaimsAvailable}`,
+              ],
+              [
+                "Context packet (turns/facts/claims)",
+                `${debug.packetRecentTurns} / ${debug.packetMeetingFacts} / ${debug.packetCandidateClaims}`,
+              ],
               ["Rolling summary updated", debug.rollingSummaryUpdated],
 
               ["Companion state", debug.companionState],
@@ -447,16 +491,28 @@ function LiveSession() {
               ["Companion capture backend", debug.companionBackend],
               ["Interviewer capture method", debug.remoteCaptureMethod],
               ["Interviewer source detected", debug.remoteSourceDetected],
-              ["Capture format", `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`],
+              [
+                "Capture format",
+                `${debug.remoteSampleRate} Hz · ${debug.remoteChannels} ch → ${debug.processedSampleRate}`,
+              ],
               ["Echo/duplicate segments dropped", String(debug.echoSuppressed)],
               ["Last capture error", debug.lastCaptureError],
               ["Current transcript source", debug.lastTranscriptSource],
               ["Final segments (interviewer/me)", `${debug.remoteCount} / ${debug.localCount}`],
               ["Last detected question", debug.lastQuestion || "—"],
-              ["Question confidence", debug.lastConfidence == null ? "—" : debug.lastConfidence.toFixed(2)],
+              [
+                "Question confidence",
+                debug.lastConfidence == null ? "—" : debug.lastConfidence.toFixed(2),
+              ],
               ["AI generation state", debug.aiState],
-              ["First-token latency", debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`],
-              ["Transcription errors", debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none"],
+              [
+                "First-token latency",
+                debug.firstTokenMs == null ? "—" : `${debug.firstTokenMs} ms`,
+              ],
+              [
+                "Transcription errors",
+                debug.errors.length ? debug.errors[debug.errors.length - 1]! : "none",
+              ],
             ].map(([label, value]) => (
               <div key={label} className="contents">
                 <dt className="text-muted-foreground">{label}</dt>
@@ -492,7 +548,11 @@ function LiveSession() {
                         : "disconnected"
               }
               statusLabel={COMPANION_STATUS[companionState] ?? "Not connected"}
-              meta={companionHealth ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}` : null}
+              meta={
+                companionHealth
+                  ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
+                  : null
+              }
               level={meetingLevel}
               action={
                 <Popover>
@@ -559,7 +619,9 @@ function LiveSession() {
             />
           )}
 
-          {needsMeetingAudio && meetingStatus !== "active" && !(isZoomDesktop && !forceTabFallback) ? (
+          {needsMeetingAudio &&
+          meetingStatus !== "active" &&
+          !(isZoomDesktop && !forceTabFallback) ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -570,7 +632,8 @@ function LiveSession() {
                 </button>
               </PopoverTrigger>
               <PopoverContent side="top" align="start" className="w-[280px] text-xs">
-                Without meeting audio only your own speech is transcribed — interviewer questions won't be detected.
+                Without meeting audio only your own speech is transcribed — interviewer questions
+                won't be detected.
               </PopoverContent>
             </Popover>
           ) : null}
@@ -633,7 +696,9 @@ function LiveSession() {
                     onClick={() => setForceTabFallback(option.key === "tab")}
                     className={cn(
                       "flex items-center gap-1.5 rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200",
-                      selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                      selected
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
                   >
                     <option.icon className="size-3.5" /> {option.label}
@@ -677,7 +742,10 @@ function LiveSession() {
             className="flex shrink-0 items-center gap-2 rounded-xl border border-border/70 bg-card/50 px-3 py-2"
             title="Helper mode — microphone speech is treated as interviewer input so you can validate the pipeline without a meeting."
           >
-            <label htmlFor="stt-test-mode" className="text-[11px] font-medium text-muted-foreground">
+            <label
+              htmlFor="stt-test-mode"
+              className="text-[11px] font-medium text-muted-foreground"
+            >
               Helper
             </label>
             <Switch id="stt-test-mode" checked={sttTestMode} onCheckedChange={setSttTestMode} />
@@ -717,11 +785,9 @@ function LiveSession() {
             >
               <Square className="size-4" /> End
             </Button>
-
           </div>
         </div>
       </div>
-
     </div>
   );
 }

@@ -5,13 +5,7 @@ export type SttState = "idle" | "connecting" | "active" | "reconnecting" | "erro
 /** Which Deepgram pipeline is actually carrying this socket right now. */
 export type SttProfile = "flux" | "standard";
 
-export type SttEvent =
-  | "interim"
-  | "start_of_turn"
-  | "eager_end_of_turn"
-  | "turn_resumed"
-  | "final";
-
+export type SttEvent = "interim" | "start_of_turn" | "eager_end_of_turn" | "turn_resumed" | "final";
 
 export type SttResult = {
   text: string;
@@ -139,7 +133,6 @@ function meanConfidence(words: DiarizedWord[]): number | null {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
-
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
  * instance, reconnects with exponential backoff, never spawns duplicates.
@@ -161,7 +154,6 @@ export class SttConnection {
     // on the classic pipeline, so speaker routing is never guesswork.
     this.profile = opts.lowLatency && !opts.diarize ? "flux" : "standard";
   }
-
 
   getState() {
     return this.state;
@@ -224,7 +216,6 @@ export class SttConnection {
     };
   }
 
-
   private async connect() {
     if (this.closedByUser) return;
     this.setState(this.attempts === 0 ? "connecting" : "reconnecting");
@@ -232,7 +223,10 @@ export class SttConnection {
     try {
       token = await this.opts.getToken();
     } catch (error) {
-      this.setState("error", error instanceof Error ? error.message : "Could not authorize transcription");
+      this.setState(
+        "error",
+        error instanceof Error ? error.message : "Could not authorize transcription",
+      );
       this.scheduleReconnect();
       return;
     }
@@ -241,10 +235,7 @@ export class SttConnection {
     // a raw API key would use "token". We only ever receive the short-lived grant token.
     const url = this.buildUrl();
     this.opts.onRequestConfig?.(this.requestConfig(url));
-    const ws = new WebSocket(url, [
-      token.mode === "grant" ? "bearer" : "token",
-      token.key,
-    ]);
+    const ws = new WebSocket(url, [token.mode === "grant" ? "bearer" : "token", token.key]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     const openedWithProfile = this.profile;
@@ -338,7 +329,9 @@ export class SttConnection {
     };
     const words = normalizeWords(alt?.words);
     if (isFinal && this.opts.diarize) {
-      const uniqueSpeakerIds = [...new Set(words.flatMap((word) => (word.speaker == null ? [] : [word.speaker])))];
+      const uniqueSpeakerIds = [
+        ...new Set(words.flatMap((word) => (word.speaker == null ? [] : [word.speaker]))),
+      ];
       this.opts.onDiarization?.({
         words,
         uniqueSpeakerIds,
@@ -375,13 +368,13 @@ export class SttConnection {
     });
   }
 
-
   /** Flux TurnInfo frames: Update / EagerEndOfTurn / TurnResumed / EndOfTurn. */
   private handleFlux(payload: Record<string, unknown>) {
     if (payload["type"] !== "TurnInfo") return;
     const evt = String(payload["event"] ?? "");
     const text = String(payload["transcript"] ?? "").trim();
-    const turnIndex = typeof payload["turn_index"] === "number" ? (payload["turn_index"] as number) : null;
+    const turnIndex =
+      typeof payload["turn_index"] === "number" ? (payload["turn_index"] as number) : null;
     const confidence =
       typeof payload["end_of_turn_confidence"] === "number"
         ? (payload["end_of_turn_confidence"] as number)
@@ -398,7 +391,6 @@ export class SttConnection {
     if (!mapped) return;
     if (mapped !== "turn_resumed" && mapped !== "start_of_turn" && !text) return;
 
-
     this.opts.onResult({
       text,
       isFinal: mapped === "final",
@@ -411,7 +403,6 @@ export class SttConnection {
       speakerConfidence: null,
       speakerAttribution: "not_requested",
     });
-
   }
 
   private scheduleReconnect() {
