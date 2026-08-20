@@ -155,10 +155,13 @@ export class SttConnection {
         openedWithProfile,
         openedWithProfile === "flux"
           ? "Deepgram Flux (conversational end-of-turn)"
-          : this.opts.lowLatency
-            ? "nova-3 (endpointing 150ms)"
-            : "nova-3 (endpointing 300ms)",
+          : this.opts.diarize
+            ? "nova-3 + diarization (endpointing 150ms)"
+            : this.opts.lowLatency
+              ? "nova-3 (endpointing 150ms)"
+              : "nova-3 (endpointing 300ms)",
       );
+
       this.setState("active");
       this.keepAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
