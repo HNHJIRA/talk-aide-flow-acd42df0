@@ -78,8 +78,16 @@ export function makeSpeaker(id: string, role: SpeakerRole, at = Date.now()): Rem
   };
 }
 
-/** Stable, human-readable attribution used in transcripts, memory and the overlay. */
+/**
+ * Stable, human-readable attribution used in transcripts, memory and the overlay.
+ *
+ * Identity is only claimed when the user actually assigned a role to a diarized
+ * voice. Otherwise the speech is attributed to a generic "Remote participant" —
+ * never to the primary interviewer, and never to a name we merely guessed.
+ */
 export function speakerTag(speaker: RemoteSpeaker | null | undefined): string {
-  if (!speaker) return "Interviewer";
-  return speaker.role === "primary_interviewer" ? `${speaker.label} · primary` : speaker.label;
+  if (!speaker) return "Remote participant";
+  if (speaker.role === "primary_interviewer") return `${speaker.label} · primary`;
+  if (speaker.role === "interviewer" || speaker.customName) return speaker.label;
+  return "Remote participant";
 }

@@ -62,6 +62,12 @@ import {
   type RemoteSpeaker,
   type SpeakerRole,
 } from "@/lib/speakers";
+import {
+  CAPABILITY_LABELS,
+  capabilityForSource,
+  speakerSeparationStatus,
+  type ParticipantCapability,
+} from "@/lib/participant-source";
 
 /** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
 export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
@@ -284,6 +290,12 @@ type Options = {
    */
   autoAssignFirstSpeaker: boolean;
   remoteRoutingMode: RemoteRoutingMode;
+  /**
+   * When speaker-aware routing is selected but the diarizer never separates a
+   * second voice, silently missing a second interviewer's questions is worse
+   * than answering every remote voice: fall back to All Remote.
+   */
+  autoFallbackAllRemote: boolean;
 };
 
 export function useCopilotSession(opts: Options) {
@@ -349,6 +361,11 @@ export function useCopilotSession(opts: Options) {
   const [capturedRemoteWav, setCapturedRemoteWav] = useState<Blob | null>(null);
   const [prerecordedControl, setPrerecordedControl] = useState("not run");
   const lastDiarizedSpeaker = useRef<number | null>(null);
+  /**
+   * Routing mode actually in force on the hot path. Equals the user's choice
+   * unless auto-fallback has demoted speaker-aware routing to All Remote.
+   */
+  const effectiveRoutingModeRef = useRef<RemoteRoutingMode>(opts.remoteRoutingMode);
 
   /* --- desktop companion --- */
   const [companionHealth, setCompanionHealth] = useState<CompanionHealth | null>(null);
@@ -1692,11 +1709,8 @@ export function useCopilotSession(opts: Options) {
         isRemote && optsRef.current.multiParticipant && result.speakerId != null
           ? resolveSpeaker(result.speakerId, result.text)
           : null;
-      if (
-        roster &&
-        optsRef.current.remoteRoutingMode === "speaker_aware" &&
-        !roleIsHeard(roster.role)
-      ) {
+      const routingMode = effectiveRoutingModeRef.current;
+      if (roster && routingMode === "speaker_aware" && !roleIsHeard(roster.role)) {
         // Explicitly ignored participant: not transcribed into the session, not
         // remembered, and it can never trigger an answer.
         routingStats.current.ignored += 1;
@@ -1707,9 +1721,9 @@ export function useCopilotSession(opts: Options) {
       const remoteMayAnswer =
         !isRemote
           ? false
-          : optsRef.current.remoteRoutingMode === "all_remote"
+          : routingMode === "all_remote"
             ? true
-            : optsRef.current.remoteRoutingMode === "manual"
+            : routingMode === "manual"
               ? false
               : optsRef.current.multiParticipant
                 ? Boolean(roster && roleDrivesAnswers(roster.role))
@@ -2686,6 +2700,27 @@ export function useCopilotSession(opts: Options) {
     ],
   );
 
+  /* ---------------- source capability + auto-fallback ---------------- */
+
+  // Browser tab audio and the companion tap are both MIXED streams: identity is
+  // only ever best-effort diarization, never a deterministic participant id.
+  const participantCapability: ParticipantCapability = capabilityForSource(
+    remoteSourceRef.current === "zoom_desktop" ? "zoom_desktop" : "remote_meeting",
+    opts.multiParticipant,
+  );
+  const separatedVoices = diarizationDebug.uniqueIds.length;
+  const speakerAwareAvailable = separatedVoices >= 2;
+  const remoteSpeakerWarning =
+    opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && separatedVoices <= 1;
+  const autoFallbackActive =
+    opts.remoteRoutingMode === "speaker_aware" &&
+    opts.autoFallbackAllRemote &&
+    remoteSpeakerWarning;
+  const effectiveRoutingMode: RemoteRoutingMode = autoFallbackActive
+    ? "all_remote"
+    : opts.remoteRoutingMode;
+  effectiveRoutingModeRef.current = effectiveRoutingMode;
+
   return {
     sessionState,
     micStatus,
@@ -2712,8 +2747,18 @@ export function useCopilotSession(opts: Options) {
     setPrimarySpeaker,
     renameSpeaker,
     diarizationNote,
-    remoteSpeakerWarning:
-      opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && diarizationDebug.uniqueIds.length <= 1,
+    remoteSpeakerWarning,
+    participantCapability,
+    capabilityLabel: CAPABILITY_LABELS[participantCapability],
+    separatedVoices,
+    speakerAwareAvailable,
+    autoFallbackActive,
+    effectiveRoutingMode,
+    speakerSeparationStatus: speakerSeparationStatus(
+      participantCapability,
+      separatedVoices,
+      autoFallbackActive,
+    ),
     remoteRecording,
     hasRemoteRecording: Boolean(capturedRemoteWav),
     startRemotePcmRecording,
