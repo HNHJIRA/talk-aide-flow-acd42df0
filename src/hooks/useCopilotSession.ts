@@ -2348,7 +2348,25 @@ export function useCopilotSession(opts: Options) {
       packetCandidateClaims: memoryView.lastPacket.claims,
       packetSubQuestions: memoryView.lastPacket.subQuestions,
       rollingSummaryUpdated: memoryView.summaryUpdatedAt,
+      diarization: diarizationNote,
+      remoteSpeakers: speakers.length
+        ? speakers
+            .map((sp) => `${sp.label}: ${SPEAKER_ROLE_LABELS[sp.role]} (${sp.segments})`)
+            .join(" | ")
+        : "none heard yet",
+      answersRoutedFrom: (() => {
+        const primary = speakers.find((sp) => sp.role === "primary_interviewer");
+        const others = speakers.filter((sp) => sp.role === "interviewer").length;
+        if (!primary && !others) return "nobody assigned — answers paused";
+        return `${primary ? primary.label : "no primary"}${others ? ` + ${others} interviewer(s)` : ""}`;
+      })(),
+      routedSegments: routingStats.current.routed,
+      ignoredSegments: routingStats.current.ignored,
+      unassignedSegments: routingStats.current.unassigned,
+      turnSpeakerSplits: routingStats.current.splits,
+      turnSpeaker: turnRef.current?.speakerLabel ?? "—",
       companionState,
+
 
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
