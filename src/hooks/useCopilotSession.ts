@@ -2008,7 +2008,7 @@ export function useCopilotSession(opts: Options) {
         onRequestConfig: (config) => {
           if (isRemote) setDiarizationDebug((prev) => ({ ...prev, config }));
         },
-        onDiarization: isRemote ? handleDiarizationFrame : undefined,
+        ...(isRemote ? { onDiarization: handleDiarizationFrame } : {}),
         onState: (state, detail) => {
           setState(state);
           if (state === "error" && detail) pushError(detail);

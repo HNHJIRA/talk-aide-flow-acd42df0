@@ -350,12 +350,14 @@ export class SttConnection {
       const runs = wordRuns(words);
       if (runs.length) {
         for (const run of runs) {
+          const firstWord = run.words[0];
+          const lastWord = run.words[run.words.length - 1];
           this.opts.onResult({
             ...base,
             text: run.words.map((word) => word.word).join(" "),
             confidence: meanConfidence(run.words) ?? base.confidence,
-            startMs: run.words[0]?.start == null ? base.startMs : Math.round(run.words[0].start * 1000),
-            endMs: run.words[run.words.length - 1]?.end == null ? base.endMs : Math.round(run.words[run.words.length - 1].end * 1000),
+            startMs: firstWord?.start == null ? base.startMs : Math.round(firstWord.start * 1000),
+            endMs: lastWord?.end == null ? base.endMs : Math.round(lastWord.end * 1000),
             speakerId: run.speaker == null ? null : String(run.speaker),
             speakerConfidence: meanConfidence(run.words),
             speakerAttribution: run.speaker == null ? "unknown" : "diarized",
