@@ -20,9 +20,17 @@ export type ParticipantCapability =
 
 export const CAPABILITY_LABELS: Record<ParticipantCapability, string> = {
   deterministic_participant_audio: "Per-participant audio • real identities",
-  diarized_mixed_audio: "Mixed audio • speaker separation best-effort",
+  diarized_mixed_audio: "Mixed audio • voice separation best-effort • identity not guaranteed",
   mixed_audio_only: "Mixed audio • speaker separation unavailable",
 };
+
+export type IdentityConfidence = "none" | "best-effort" | "deterministic";
+
+export function identityConfidence(capability: ParticipantCapability): IdentityConfidence {
+  if (capability === "deterministic_participant_audio") return "deterministic";
+  if (capability === "diarized_mixed_audio") return "best-effort";
+  return "none";
+}
 
 /**
  * Frame contract a future deterministic source (Zoom SDK, Meet SDK, native
@@ -63,7 +71,7 @@ export function speakerSeparationStatus(
 ): string {
   if (capability === "deterministic_participant_audio")
     return `Participant identity provided by the meeting source (${distinctVoices} participants)`;
-  if (distinctVoices >= 2) return `Detected ${distinctVoices} voices`;
+  if (distinctVoices >= 2) return `Detected ${distinctVoices} temporary voice labels (best effort)`;
   if (fallbackActive)
     return "Only one voice label detected — using All Remote mode";
   return "No separated voices yet — best-effort on mixed audio";

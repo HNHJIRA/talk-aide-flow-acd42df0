@@ -85,8 +85,8 @@ function LiveSession() {
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const [multiParticipant, setMultiParticipant] = useState(true);
-  const [autoAssignFirstSpeaker, setAutoAssignFirstSpeaker] = useState(true);
-  const [remoteRoutingMode, setRemoteRoutingMode] = useState<RemoteRoutingMode>("speaker_aware");
+  const [autoAssignFirstSpeaker, setAutoAssignFirstSpeaker] = useState(false);
+  const [remoteRoutingMode, setRemoteRoutingMode] = useState<RemoteRoutingMode>("all_remote");
   const [autoFallbackAllRemote, setAutoFallbackAllRemote] = useState(true);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const caps = detectCapabilities();
@@ -176,6 +176,9 @@ function LiveSession() {
     autoFallbackActive,
     effectiveRoutingMode,
     speakerSeparationStatus,
+    identityConfidence,
+    speakerLabelStability,
+    autoFallbackReason,
     remoteRecording,
     hasRemoteRecording,
     startRemotePcmRecording,
@@ -493,6 +496,15 @@ function LiveSession() {
               ["Diarization requested", debug.diarizationRequested],
               ["Diarization active", debug.diarizationActive],
               ["Raw unique speaker IDs seen this session", debug.rawUniqueSpeakerIds],
+              ["Source capability", debug.sourceCapability],
+              ["Identity confidence", debug.identityConfidence],
+              ["Speaker label stability", debug.speakerLabelStability],
+              ["Current speaker distribution", debug.speakerDistribution],
+              ["Recent label switches", String(debug.recentLabelSwitches)],
+              ["Possible label drift", debug.possibleLabelDrift],
+              ["Label drift events", String(debug.labelDriftEvents)],
+              ["Current routing mode", debug.currentRoutingMode],
+              ["Auto-fallback reason", debug.autoFallbackReason],
               ["Word counts per raw speaker ID", debug.wordsBySpeaker],
               ["Roster speaker IDs", debug.rosterSpeakerIds],
               ["Roster participants (raw ID / names / role)", debug.rosterParticipants],
@@ -787,12 +799,15 @@ function LiveSession() {
             autoFallbackEnabled={autoFallbackAllRemote}
             onAutoFallbackChange={setAutoFallbackAllRemote}
             autoFallbackActive={autoFallbackActive}
+            identityConfidence={identityConfidence}
+            labelStability={speakerLabelStability}
+            fallbackReason={autoFallbackReason}
           />
 
           <div className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-muted/30 p-1">
             {(
               [
-                ["speaker_aware", "Speaker-aware"],
+                ["speaker_aware", "Speaker-aware (best effort)"],
                 ["all_remote", "All remote"],
                 ["manual", "Manual trigger"],
               ] as const

@@ -12,7 +12,7 @@
 export type SpeakerRole = "primary_interviewer" | "interviewer" | "other" | "ignore" | "unassigned";
 
 export type RemoteSpeaker = {
-  /** Deepgram diarization index as a string, or "single" when diarization is off. */
+  /** Temporary Deepgram voice-cluster index, or "single" when diarization is off. */
   id: string;
   /** Explicit immutable copy of the raw Deepgram speaker index. */
   rawSpeakerId: string;
@@ -59,7 +59,7 @@ export function roleIsHeard(role: SpeakerRole): boolean {
 export function defaultSpeakerLabel(id: string): string {
   if (id === "single") return "Interviewer";
   const n = Number(id);
-  return Number.isFinite(n) ? `Speaker ${n + 1}` : `Speaker ${id}`;
+  return Number.isFinite(n) ? `Voice ${n + 1}` : `Voice ${id}`;
 }
 
 export function makeSpeaker(id: string, role: SpeakerRole, at = Date.now()): RemoteSpeaker {
