@@ -14,7 +14,13 @@ export type SpeakerRole = "primary_interviewer" | "interviewer" | "other" | "ign
 export type RemoteSpeaker = {
   /** Deepgram diarization index as a string, or "single" when diarization is off. */
   id: string;
-  /** Editable display name. Defaults to "Speaker 1", "Speaker 2", … */
+  /** Explicit immutable copy of the raw Deepgram speaker index. */
+  rawSpeakerId: string;
+  /** Immutable generated name derived only from rawSpeakerId. */
+  displayName: string;
+  /** User-provided name; never used as an identity or map key. */
+  customName: string | null;
+  /** Effective UI label: customName when present, otherwise displayName. */
   label: string;
   role: SpeakerRole;
   /** How many finalised segments we have heard from this speaker. */
@@ -57,9 +63,13 @@ export function defaultSpeakerLabel(id: string): string {
 }
 
 export function makeSpeaker(id: string, role: SpeakerRole, at = Date.now()): RemoteSpeaker {
+  const displayName = defaultSpeakerLabel(id);
   return {
     id,
-    label: defaultSpeakerLabel(id),
+    rawSpeakerId: id,
+    displayName,
+    customName: null,
+    label: displayName,
     role,
     segments: 0,
     firstHeardAt: at,

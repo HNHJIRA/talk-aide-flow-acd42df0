@@ -177,6 +177,7 @@ export type DebugInfo = {
   rawDiarizedWords: string;
   rawUniqueSpeakerIds: string;
   rosterSpeakerIds: string;
+  rosterParticipants: string;
   currentDiarizedSpeaker: string;
   wordsBySpeaker: string;
   speakerChangesDetected: number;
@@ -314,7 +315,6 @@ export function useCopilotSession(opts: Options) {
     unknownWords: 0,
     rosterEntriesCreated: 0,
   });
-  const knownRemoteSpeakerIds = useRef<Set<number>>(new Set());
   const lastDiarizedSpeaker = useRef<number | null>(null);
 
   /* --- desktop companion --- */
@@ -402,11 +402,12 @@ export function useCopilotSession(opts: Options) {
       // final Results frame or the utterance is only one word long.
       let created = 0;
       for (const id of frame.uniqueSpeakerIds) {
-        if (!knownRemoteSpeakerIds.current.has(id)) {
-          knownRemoteSpeakerIds.current.add(id);
-          resolveSpeaker(String(id), "");
-          created += 1;
-        }
+        const rawSpeakerId = String(id);
+        const existed = speakersRef.current.has(rawSpeakerId);
+        // Resolve every ID in every frame. The roster map is the single source of
+        // truth, so no secondary cache can suppress registration of a valid ID.
+        resolveSpeaker(rawSpeakerId, "");
+        if (!existed) created += 1;
       }
 
       let changes = 0;
@@ -458,7 +459,9 @@ export function useCopilotSession(opts: Options) {
     (id: string, label: string) => {
       const speaker = speakersRef.current.get(id);
       if (!speaker) return;
-      speaker.label = label.trim() || speaker.label;
+      const customName = label.trim();
+      speaker.customName = customName && customName !== speaker.displayName ? customName : null;
+      speaker.label = speaker.customName ?? speaker.displayName;
       publishRoster();
     },
     [publishRoster],
@@ -2474,16 +2477,31 @@ export function useCopilotSession(opts: Options) {
         : "no raw speaker IDs received yet",
       rawDiarizedWords: diarizationDebug.rawWords,
       rawUniqueSpeakerIds: diarizationDebug.uniqueIds.length
-        ? diarizationDebug.uniqueIds.join(", ")
-        : "none",
-      rosterSpeakerIds: speakers.length ? speakers.map((speaker) => speaker.id).join(", ") : "none",
+        ? `[${diarizationDebug.uniqueIds.join(", ")}]`
+        : "[]",
+      rosterSpeakerIds: speakers.length
+        ? `[${speakers.map((speaker) => speaker.rawSpeakerId).join(", ")}]`
+        : "[]",
+      rosterParticipants: speakers.length
+        ? JSON.stringify(
+            speakers.map((speaker) => ({
+              rawSpeakerId: speaker.rawSpeakerId,
+              displayName: speaker.displayName,
+              customName: speaker.customName,
+              role: SPEAKER_ROLE_LABELS[speaker.role],
+            })),
+            null,
+            2,
+          )
+        : "[]",
       currentDiarizedSpeaker:
         diarizationDebug.currentSpeaker == null
           ? "REMOTE UNKNOWN"
           : String(diarizationDebug.currentSpeaker),
       wordsBySpeaker: Object.entries(diarizationDebug.wordsBySpeaker).length
         ? Object.entries(diarizationDebug.wordsBySpeaker)
-            .map(([id, count]) => `Speaker ${id}: ${count}`)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .map(([id, count]) => `${id}: ${count} words`)
             .join(" | ")
         : "none",
       speakerChangesDetected: diarizationDebug.speakerChanges,
