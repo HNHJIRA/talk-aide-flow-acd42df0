@@ -1542,15 +1542,36 @@ export function useCopilotSession(opts: Options) {
         endMs: number | null;
         event?: SttEvent;
         turnIndex?: number | null;
+        /** Diarized remote speaker index, when multi-participant routing is on. */
+        speakerId?: string | null;
       },
     ) => {
       const isRemote = source !== "microphone";
       const mode = optsRef.current.micMode;
+
+      // ---- speaker routing (remote streams only, deterministic, no network) ----
+      const roster =
+        isRemote && optsRef.current.multiParticipant
+          ? resolveSpeaker(result.speakerId ?? null, result.text)
+          : null;
+      if (roster && !roleIsHeard(roster.role)) {
+        // Explicitly ignored participant: not transcribed into the session, not
+        // remembered, and it can never trigger an answer.
+        routingStats.current.ignored += 1;
+        if (result.isFinal) patchDiag({ lastTranscriptSource: `${source} (${roster.label} — ignored)` });
+        return;
+      }
+      const remoteMayAnswer = !roster || roleDrivesAnswers(roster.role);
+      if (roster && !remoteMayAnswer) routingStats.current.unassigned += 1;
+
       // Only an interviewer-side stream drives the low-latency machine; Helper mode
       // and opt-in mic-only fallback are the two explicit exceptions.
       const drivesDetection =
         optsRef.current.autoDetect &&
-        (isRemote || mode === "test" || (mode === "fallback" && optsRef.current.fallbackAutoDetect));
+        ((isRemote && remoteMayAnswer) ||
+          mode === "test" ||
+          (mode === "fallback" && optsRef.current.fallbackAutoDetect));
+
 
       if (!result.isFinal) {
         if (result.event === "start_of_turn") {
