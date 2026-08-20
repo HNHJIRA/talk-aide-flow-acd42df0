@@ -31,6 +31,8 @@ export type OverlaySnapshot = {
   index: number;
   total: number;
   question: string;
+  /** Roster label of the participant who asked, when several people are on the call. */
+  askedBy: string;
   answer: string;
   answerStatus: "none" | "generating" | "answered" | "error" | "stopped";
   /** Bumps whenever the same logical turn is revised, so stale text is dropped. */

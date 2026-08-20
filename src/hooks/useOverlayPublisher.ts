@@ -220,6 +220,7 @@ export function useOverlayPublisher(input: OverlayInput) {
       index: visible.length ? visible.length - Math.min(cursor, visible.length - 1) : 0,
       total: visible.length,
       question: current?.text ?? "",
+      askedBy: current?.askedBy ?? "",
       answer: current?.answer ?? "",
       answerStatus: current ? current.status : "none",
       revision: current ? current.answer.length : 0,
