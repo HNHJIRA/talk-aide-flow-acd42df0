@@ -1970,6 +1970,10 @@ export function useCopilotSession(opts: Options) {
       if (!drivesDetection) return;
 
       const turn = activeTurn(result.text, roster);
+      if (isRemote && !labelsTrusted) {
+        turn.speakerLabel = "Remote participant";
+        turn.speakerRole = "unassigned";
+      }
       if (turn.turnIndex == null) turn.turnIndex = result.turnIndex ?? null;
       // speechEnd is the last moment we heard voice on this turn — the honest
       // anchor for "speech end -> first token", not the moment STT finalised.
