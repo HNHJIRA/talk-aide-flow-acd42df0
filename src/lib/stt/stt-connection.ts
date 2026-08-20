@@ -212,7 +212,13 @@ export class SttConnection {
     const type = payload["type"] as string | undefined;
     if (type && type !== "Results") return;
     const channel = payload["channel"] as
-      | { alternatives?: { transcript?: string; confidence?: number }[] }
+      | {
+          alternatives?: {
+            transcript?: string;
+            confidence?: number;
+            words?: { speaker?: number; word?: string }[];
+          }[];
+        }
       | undefined;
     const alt = channel?.alternatives?.[0];
     const text = (alt?.transcript ?? "").trim();
@@ -228,8 +234,10 @@ export class SttConnection {
       endMs: start != null && duration != null ? Math.round((start + duration) * 1000) : null,
       event: isFinal ? "final" : "interim",
       turnIndex: null,
+      speakerId: dominantSpeaker(alt?.words),
     });
   }
+
 
   /** Flux TurnInfo frames: Update / EagerEndOfTurn / TurnResumed / EndOfTurn. */
   private handleFlux(payload: Record<string, unknown>) {
