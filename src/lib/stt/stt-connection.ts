@@ -22,6 +22,11 @@ export type SttResult = {
   /** Richer turn signal; "interim"/"final" for the classic pipeline. */
   event: SttEvent;
   turnIndex: number | null;
+  /**
+   * Diarized speaker index reported by Deepgram ("0", "1", …) for this result,
+   * or null when diarization is off / unavailable on the active pipeline.
+   */
+  speakerId: string | null;
 };
 
 type Options = {
@@ -33,6 +38,12 @@ type Options = {
    * proven standard pipeline. Falls back automatically when unavailable.
    */
   lowLatency?: boolean;
+  /**
+   * Multi-participant routing: ask Deepgram to tag every word with a speaker
+   * index. Diarization only exists on the classic /v1/listen pipeline, so a
+   * diarized socket never uses Flux.
+   */
+  diarize?: boolean;
   onResult: (result: SttResult) => void;
   onState: (state: SttState, detail?: string) => void;
   onProfile?: (profile: SttProfile, detail: string) => void;
@@ -40,6 +51,7 @@ type Options = {
 
 const FLUX_URL = "wss://api.deepgram.com/v2/listen";
 const STANDARD_URL = "wss://api.deepgram.com/v1/listen";
+
 
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
