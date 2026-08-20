@@ -1485,9 +1485,32 @@ export function useCopilotSession(opts: Options) {
    * reads like a fresh question starts a new one.
    */
   const activeTurn = useCallback(
-    (text: string) => {
+    (text: string, speaker?: RemoteSpeaker | null) => {
       const prev = turnRef.current;
-      if (!prev || !prev.answered) return currentTurn();
+      // Speaker-aware assembly: two different remote voices are two different
+      // logical turns, always — never merged, even inside the grace window.
+      if (prev && speaker && prev.speakerKey && prev.speakerKey !== speaker.id) {
+        routingStats.current.splits += 1;
+        if (!prev.answered) {
+          clearTurnTimers(prev);
+          prev.status = "cancelled";
+          if (prev.spec && !prev.spec.promoted) {
+            prev.spec.aborted = true;
+            prev.spec.controller.abort();
+            prev.spec = null;
+          }
+        }
+        return newTurn(speaker);
+      }
+      if (!prev || !prev.answered) {
+        const turn = currentTurn();
+        if (speaker && !turn.speakerKey) {
+          turn.speakerKey = speaker.id;
+          turn.speakerLabel = speaker.label;
+          turn.speakerRole = speaker.role;
+        }
+        return turn;
+      }
       const withinWindow =
         prev.committedAt != null && performance.now() - prev.committedAt <= LATE_CONTINUATION_MS;
       const norm = normalize(text);
@@ -1499,10 +1522,11 @@ export function useCopilotSession(opts: Options) {
         reopenTurn(prev);
         return prev;
       }
-      return newTurn();
+      return newTurn(speaker);
     },
-    [currentTurn, newTurn, reopenTurn],
+    [currentTurn, newTurn, reopenTurn, clearTurnTimers],
   );
+
 
 
 
