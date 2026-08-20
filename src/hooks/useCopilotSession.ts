@@ -2694,6 +2694,27 @@ export function useCopilotSession(opts: Options) {
     ],
   );
 
+  /* ---------------- source capability + auto-fallback ---------------- */
+
+  // Browser tab audio and the companion tap are both MIXED streams: identity is
+  // only ever best-effort diarization, never a deterministic participant id.
+  const participantCapability: ParticipantCapability = capabilityForSource(
+    remoteSourceRef.current === "zoom_desktop" ? "zoom_desktop" : "remote_meeting",
+    opts.multiParticipant,
+  );
+  const separatedVoices = diarizationDebug.uniqueIds.length;
+  const speakerAwareAvailable = separatedVoices >= 2;
+  const remoteSpeakerWarning =
+    opts.multiParticipant && remoteAudioMetrics.speechSeconds >= 20 && separatedVoices <= 1;
+  const autoFallbackActive =
+    opts.remoteRoutingMode === "speaker_aware" &&
+    opts.autoFallbackAllRemote &&
+    remoteSpeakerWarning;
+  const effectiveRoutingMode: RemoteRoutingMode = autoFallbackActive
+    ? "all_remote"
+    : opts.remoteRoutingMode;
+  effectiveRoutingModeRef.current = effectiveRoutingMode;
+
   return {
     sessionState,
     micStatus,
