@@ -58,9 +58,17 @@ export function ParticipantsPanel({
   onSetPrimary,
   onRename,
   note,
+  sourceLabel,
+  capabilityLabel,
+  separationStatus,
+  speakerAwareAvailable,
+  autoFallbackEnabled,
+  onAutoFallbackChange,
+  autoFallbackActive,
 }: Props) {
   const answering = speakers.filter((s) => roleDrivesAnswers(s.role)).length;
-  const waiting = enabled && speakers.length > 0 && answering === 0;
+  const waiting =
+    enabled && speakerAwareAvailable && !autoFallbackActive && speakers.length > 0 && answering === 0;
 
   return (
     <Popover>
