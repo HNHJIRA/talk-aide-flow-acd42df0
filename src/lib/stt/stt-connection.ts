@@ -5,13 +5,7 @@ export type SttState = "idle" | "connecting" | "active" | "reconnecting" | "erro
 /** Which Deepgram pipeline is actually carrying this socket right now. */
 export type SttProfile = "flux" | "standard";
 
-export type SttEvent =
-  | "interim"
-  | "start_of_turn"
-  | "eager_end_of_turn"
-  | "turn_resumed"
-  | "final";
-
+export type SttEvent = "interim" | "start_of_turn" | "eager_end_of_turn" | "turn_resumed" | "final";
 
 export type SttResult = {
   text: string;
@@ -27,6 +21,33 @@ export type SttResult = {
    * or null when diarization is off / unavailable on the active pipeline.
    */
   speakerId: string | null;
+  /** Mean confidence of words in this attributed run, when provided. */
+  speakerConfidence: number | null;
+  speakerAttribution: "diarized" | "unknown" | "not_requested";
+};
+
+export type DiarizedWord = {
+  word: string;
+  speaker: number | null;
+  confidence: number | null;
+  start: number | null;
+  end: number | null;
+};
+
+export type SttRequestConfig = {
+  endpoint: string;
+  model: string;
+  encoding: string;
+  sampleRate: number;
+  channels: number;
+  diarizationRequested: boolean;
+  interimResults: boolean;
+};
+
+export type DiarizationFrame = {
+  words: DiarizedWord[];
+  uniqueSpeakerIds: number[];
+  missingSpeakerWords: number;
 };
 
 type Options = {
@@ -47,6 +68,8 @@ type Options = {
   onResult: (result: SttResult) => void;
   onState: (state: SttState, detail?: string) => void;
   onProfile?: (profile: SttProfile, detail: string) => void;
+  onRequestConfig?: (config: SttRequestConfig) => void;
+  onDiarization?: (frame: DiarizationFrame) => void;
 };
 
 const FLUX_URL = "wss://api.deepgram.com/v2/listen";
@@ -74,6 +97,41 @@ function dominantSpeaker(words?: { speaker?: number }[]): string | null {
   return best == null ? null : String(best);
 }
 
+type DeepgramWord = {
+  speaker?: number;
+  word?: string;
+  punctuated_word?: string;
+  confidence?: number;
+  start?: number;
+  end?: number;
+};
+
+function normalizeWords(words: DeepgramWord[] | undefined): DiarizedWord[] {
+  return (words ?? [])
+    .map((word) => ({
+      word: (word.punctuated_word ?? word.word ?? "").trim(),
+      speaker: Number.isInteger(word.speaker) ? (word.speaker as number) : null,
+      confidence: typeof word.confidence === "number" ? word.confidence : null,
+      start: typeof word.start === "number" ? word.start : null,
+      end: typeof word.end === "number" ? word.end : null,
+    }))
+    .filter((word) => Boolean(word.word));
+}
+
+function wordRuns(words: DiarizedWord[]) {
+  const runs: { speaker: number | null; words: DiarizedWord[] }[] = [];
+  for (const word of words) {
+    const last = runs[runs.length - 1];
+    if (!last || last.speaker !== word.speaker) runs.push({ speaker: word.speaker, words: [word] });
+    else last.words.push(word);
+  }
+  return runs;
+}
+
+function meanConfidence(words: DiarizedWord[]): number | null {
+  const values = words.flatMap((word) => (word.confidence == null ? [] : [word.confidence]));
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
 
 /**
  * One streaming Deepgram connection. Explicit lifecycle: exactly one socket per
@@ -96,7 +154,6 @@ export class SttConnection {
     // on the classic pipeline, so speaker routing is never guesswork.
     this.profile = opts.lowLatency && !opts.diarize ? "flux" : "standard";
   }
-
 
   getState() {
     return this.state;
@@ -146,6 +203,18 @@ export class SttConnection {
     return `${STANDARD_URL}?${params.toString()}`;
   }
 
+  private requestConfig(url: string): SttRequestConfig {
+    const parsed = new URL(url);
+    return {
+      endpoint: parsed.pathname,
+      model: parsed.searchParams.get("model") ?? "unknown",
+      encoding: parsed.searchParams.get("encoding") ?? "unknown",
+      sampleRate: Number(parsed.searchParams.get("sample_rate") ?? STT_SAMPLE_RATE),
+      channels: Number(parsed.searchParams.get("channels") ?? 1),
+      diarizationRequested: parsed.searchParams.get("diarize") === "true",
+      interimResults: parsed.searchParams.get("interim_results") === "true",
+    };
+  }
 
   private async connect() {
     if (this.closedByUser) return;
@@ -154,17 +223,19 @@ export class SttConnection {
     try {
       token = await this.opts.getToken();
     } catch (error) {
-      this.setState("error", error instanceof Error ? error.message : "Could not authorize transcription");
+      this.setState(
+        "error",
+        error instanceof Error ? error.message : "Could not authorize transcription",
+      );
       this.scheduleReconnect();
       return;
     }
 
     // A /v1/auth/grant access token authenticates with the "bearer" subprotocol;
     // a raw API key would use "token". We only ever receive the short-lived grant token.
-    const ws = new WebSocket(this.buildUrl(), [
-      token.mode === "grant" ? "bearer" : "token",
-      token.key,
-    ]);
+    const url = this.buildUrl();
+    this.opts.onRequestConfig?.(this.requestConfig(url));
+    const ws = new WebSocket(url, [token.mode === "grant" ? "bearer" : "token", token.key]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     const openedWithProfile = this.profile;
@@ -238,7 +309,7 @@ export class SttConnection {
           alternatives?: {
             transcript?: string;
             confidence?: number;
-            words?: { speaker?: number; word?: string }[];
+            words?: DeepgramWord[];
           }[];
         }
       | undefined;
@@ -248,25 +319,62 @@ export class SttConnection {
     const start = payload["start"] as number | undefined;
     const duration = payload["duration"] as number | undefined;
     const isFinal = Boolean(payload["is_final"]);
-    this.opts.onResult({
-      text,
+    const base = {
       isFinal,
       confidence: alt?.confidence ?? null,
       startMs: start != null ? Math.round(start * 1000) : null,
       endMs: start != null && duration != null ? Math.round((start + duration) * 1000) : null,
-      event: isFinal ? "final" : "interim",
+      event: isFinal ? ("final" as const) : ("interim" as const),
       turnIndex: null,
+    };
+    const words = normalizeWords(alt?.words);
+    if (isFinal && this.opts.diarize) {
+      const uniqueSpeakerIds = [
+        ...new Set(words.flatMap((word) => (word.speaker == null ? [] : [word.speaker]))),
+      ];
+      this.opts.onDiarization?.({
+        words,
+        uniqueSpeakerIds,
+        missingSpeakerWords: words.filter((word) => word.speaker == null).length,
+      });
+
+      // One Deepgram Results frame may contain several people. Preserve every
+      // contiguous word-level speaker run rather than collapsing to a majority.
+      const runs = wordRuns(words);
+      if (runs.length) {
+        for (const run of runs) {
+          const firstWord = run.words[0];
+          const lastWord = run.words[run.words.length - 1];
+          this.opts.onResult({
+            ...base,
+            text: run.words.map((word) => word.word).join(" "),
+            confidence: meanConfidence(run.words) ?? base.confidence,
+            startMs: firstWord?.start == null ? base.startMs : Math.round(firstWord.start * 1000),
+            endMs: lastWord?.end == null ? base.endMs : Math.round(lastWord.end * 1000),
+            speakerId: run.speaker == null ? null : String(run.speaker),
+            speakerConfidence: meanConfidence(run.words),
+            speakerAttribution: run.speaker == null ? "unknown" : "diarized",
+          });
+        }
+        return;
+      }
+    }
+    this.opts.onResult({
+      ...base,
+      text,
       speakerId: dominantSpeaker(alt?.words),
+      speakerConfidence: null,
+      speakerAttribution: this.opts.diarize ? "unknown" : "not_requested",
     });
   }
-
 
   /** Flux TurnInfo frames: Update / EagerEndOfTurn / TurnResumed / EndOfTurn. */
   private handleFlux(payload: Record<string, unknown>) {
     if (payload["type"] !== "TurnInfo") return;
     const evt = String(payload["event"] ?? "");
     const text = String(payload["transcript"] ?? "").trim();
-    const turnIndex = typeof payload["turn_index"] === "number" ? (payload["turn_index"] as number) : null;
+    const turnIndex =
+      typeof payload["turn_index"] === "number" ? (payload["turn_index"] as number) : null;
     const confidence =
       typeof payload["end_of_turn_confidence"] === "number"
         ? (payload["end_of_turn_confidence"] as number)
@@ -283,7 +391,6 @@ export class SttConnection {
     if (!mapped) return;
     if (mapped !== "turn_resumed" && mapped !== "start_of_turn" && !text) return;
 
-
     this.opts.onResult({
       text,
       isFinal: mapped === "final",
@@ -293,8 +400,9 @@ export class SttConnection {
       event: mapped,
       turnIndex,
       speakerId: null,
+      speakerConfidence: null,
+      speakerAttribution: "not_requested",
     });
-
   }
 
   private scheduleReconnect() {
