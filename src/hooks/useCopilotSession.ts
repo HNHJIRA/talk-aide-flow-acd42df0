@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { createPcmSource, stopStream, type PcmSource } from "@/lib/audio/pcm-source";
+import {
+  createPcmSource,
+  stopStream,
+  type PcmMetrics,
+  type PcmSource,
+} from "@/lib/audio/pcm-source";
+import { blobToBase64, linear16ToWav } from "@/lib/audio/wav";
 import {
   SttConnection,
   type SttState,
@@ -14,6 +20,7 @@ import {
   detectQuestion,
   prefetchContext,
   primeLiveContext,
+  runPrerecordedDiarization,
   updateMeetingMemory,
 } from "@/lib/copilot.functions";
 import {
@@ -65,6 +72,7 @@ export type SessionState =
 
 export type MicMode = "candidate" | "test" | "fallback";
 export type Speaker = "interviewer" | "candidate" | "test";
+export type RemoteRoutingMode = "speaker_aware" | "all_remote" | "manual";
 
 export type Segment = {
   id: string;
@@ -183,6 +191,17 @@ export type DebugInfo = {
   speakerChangesDetected: number;
   unknownSpeakerWords: number;
   rosterEntriesCreated: number;
+  requestedDiarizer: string;
+  resolvedDiarizer: string;
+  diarizerVersion: string;
+  remoteAudioSeconds: number;
+  remoteSpeechSeconds: number;
+  remoteRms: number;
+  remotePeak: number;
+  remoteClippingCount: number;
+  remoteSilencePercentage: number;
+  remoteRecording: string;
+  prerecordedControl: string;
 
   /* --- desktop companion / Zoom Desktop --- */
   companionState: CompanionState;
@@ -264,6 +283,7 @@ type Options = {
    * can be reassigned at any time. Off = nothing answers until the user assigns.
    */
   autoAssignFirstSpeaker: boolean;
+  remoteRoutingMode: RemoteRoutingMode;
 };
 
 export function useCopilotSession(opts: Options) {
@@ -314,7 +334,20 @@ export function useCopilotSession(opts: Options) {
     speakerChanges: 0,
     unknownWords: 0,
     rosterEntriesCreated: 0,
+    resolvedDiarizer: null as string | null,
+    diarizerVersion: null as string | null,
   });
+  const [remoteAudioMetrics, setRemoteAudioMetrics] = useState<PcmMetrics>({
+    rms: 0,
+    peak: 0,
+    clippingCount: 0,
+    audioSeconds: 0,
+    speechSeconds: 0,
+    silencePercentage: 100,
+  });
+  const [remoteRecording, setRemoteRecording] = useState(false);
+  const [capturedRemoteWav, setCapturedRemoteWav] = useState<Blob | null>(null);
+  const [prerecordedControl, setPrerecordedControl] = useState("not run");
   const lastDiarizedSpeaker = useRef<number | null>(null);
 
   /* --- desktop companion --- */
