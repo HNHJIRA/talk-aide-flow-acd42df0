@@ -96,7 +96,11 @@ export type QuestionItem = {
   answerId: string | null;
   firstTokenMs: number | null;
   pinned: boolean;
+  /** Who asked it (roster label), when multi-participant routing is on. */
+  askedBy: string | null;
+  askedByRole: SpeakerRole | null;
 };
+
 
 
 export type DebugInfo = {
