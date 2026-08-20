@@ -409,7 +409,10 @@ export class MeetingMemory {
       })
       .sort((a, b) => b.score - a.score || b.f.at - a.f.at)
       .slice(0, limit)
-      .map((x) => `${x.f.saidBy === "client" ? "CLIENT" : "CANDIDATE"}: ${x.f.value}`);
+      .map((x) =>
+        `${x.f.saidBy === "client" ? (x.f.speakerLabel ?? "CLIENT").toUpperCase() : "CANDIDATE"}: ${x.f.value}`,
+      );
+
   }
 
   relevantClaims(question: string, limit = 3): string[] {
