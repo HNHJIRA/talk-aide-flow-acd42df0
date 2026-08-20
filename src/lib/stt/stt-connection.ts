@@ -270,7 +270,9 @@ export class SttConnection {
       endMs: null,
       event: mapped,
       turnIndex,
+      speakerId: null,
     });
+
   }
 
   private scheduleReconnect() {
