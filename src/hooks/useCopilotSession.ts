@@ -626,18 +626,22 @@ export function useCopilotSession(opts: Options) {
   });
   const [turnSilenceMs, setTurnSilenceMs] = useState(0);
 
-  const newTurn = useCallback(() => {
+  const newTurn = useCallback((speaker?: RemoteSpeaker | null) => {
     const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const turn: Turn = {
       id,
       timer: new TurnTimer(id),
       status: "listening",
       text: "",
+      speakerKey: speaker?.id ?? null,
+      speakerLabel: speaker?.label ?? null,
+      speakerRole: speaker?.role ?? null,
       segments: [],
       raw: "",
       corrections: [],
       resumedCount: 0,
       turnIndex: null,
+
       answered: false,
       segmentId: null,
       revision: 0,
