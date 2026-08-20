@@ -659,8 +659,11 @@ export function liveUserPrompt(args: {
     ? `\nThis one turn contains several parts — cover them all in ONE natural answer:\n${p.subQuestions.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
     : "";
   parts.push(
-    `CURRENT TOPIC: ${p.currentTopic || "(opening)"}\n\nTHEY JUST ASKED (category: ${args.category}):\n${question}${subs}\n\nSay what the speaker should say now — one continuous, conversational answer.`,
+    `CURRENT TOPIC: ${p.currentTopic || "(opening)"}\n\n${
+      p.askedBy ? `${p.askedBy.toUpperCase()} JUST ASKED` : "THEY JUST ASKED"
+    } (category: ${args.category}):\n${question}${subs}\n\nSay what the speaker should say now — one continuous, conversational answer.`,
   );
+
   return parts.join("\n\n");
 }
 
