@@ -1715,9 +1715,9 @@ export function useCopilotSession(opts: Options) {
       const remoteMayAnswer =
         !isRemote
           ? false
-          : optsRef.current.remoteRoutingMode === "all_remote"
+          : routingMode === "all_remote"
             ? true
-            : optsRef.current.remoteRoutingMode === "manual"
+            : routingMode === "manual"
               ? false
               : optsRef.current.multiParticipant
                 ? Boolean(roster && roleDrivesAnswers(roster.role))
