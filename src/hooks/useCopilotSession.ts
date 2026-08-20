@@ -234,7 +234,20 @@ type Options = {
   micMode: MicMode;
   fallbackAutoDetect: boolean;
   micConstraints: { echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean };
+  /**
+   * Multi-participant routing. When on, the remote stream is diarized and every
+   * remote voice becomes a roster entry the user assigns a role to. Answers only
+   * ever come from PRIMARY INTERVIEWER / INTERVIEWER roles.
+   */
+  multiParticipant: boolean;
+  /**
+   * Convenience only, and never a hardcoded "speaker 0 is the interviewer" rule:
+   * the FIRST remote voice actually heard is proposed as primary interviewer and
+   * can be reassigned at any time. Off = nothing answers until the user assigns.
+   */
+  autoAssignFirstSpeaker: boolean;
 };
+
 
 export function useCopilotSession(opts: Options) {
   const { sessionId } = opts;
