@@ -1707,14 +1707,17 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({
         lastTranscriptSource: isRemote
-          ? `${source} (${roster ? `${roster.label} · ${speakerTag(roster.role)}` : "INTERVIEWER"})`
+          ? `${source} (${roster ? speakerTag(roster) : "INTERVIEWER"})`
             : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
       });
       if (isRemote) counts.current.remote += 1;
       else counts.current.local += 1;
-      if (roster && remoteMayAnswer) routingStats.current.routed += 1;
+      if (roster) {
+        roster.segments += 1;
+        if (remoteMayAnswer) routingStats.current.routed += 1;
+      }
 
       const segment: Segment = {
         id: `${source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
