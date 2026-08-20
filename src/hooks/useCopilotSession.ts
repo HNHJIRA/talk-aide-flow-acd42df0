@@ -284,6 +284,12 @@ type Options = {
    */
   autoAssignFirstSpeaker: boolean;
   remoteRoutingMode: RemoteRoutingMode;
+  /**
+   * When speaker-aware routing is selected but the diarizer never separates a
+   * second voice, silently missing a second interviewer's questions is worse
+   * than answering every remote voice: fall back to All Remote.
+   */
+  autoFallbackAllRemote: boolean;
 };
 
 export function useCopilotSession(opts: Options) {
