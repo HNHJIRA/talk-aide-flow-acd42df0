@@ -288,7 +288,10 @@ function LiveSession() {
                   )}
                 >
                   {segment.speaker === "interviewer"
-                    ? "Interviewer"
+                    ? (segment.speakerLabel ??
+                      (multiParticipant && segment.speakerId == null
+                        ? "Remote unknown"
+                        : "Interviewer"))
                     : segment.speaker === "test"
                       ? "Helper"
                       : "You"}
@@ -516,7 +519,15 @@ function LiveSession() {
             ].map(([label, value]) => (
               <div key={label} className="contents">
                 <dt className="text-muted-foreground">{label}</dt>
-                <dd className="truncate font-mono text-foreground/90" title={String(value)}>
+                <dd
+                  className={cn(
+                    "font-mono text-foreground/90",
+                    label === "Raw diarized words (latest final)"
+                      ? "max-h-32 overflow-y-auto whitespace-pre-wrap break-words"
+                      : "truncate",
+                  )}
+                  title={String(value)}
+                >
                   {String(value)}
                 </dd>
               </div>
