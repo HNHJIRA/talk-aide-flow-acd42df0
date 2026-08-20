@@ -6,6 +6,8 @@ import {
   type SttState,
   type SttEvent,
   type SttProfile,
+  type DiarizationFrame,
+  type SttRequestConfig,
 } from "@/lib/stt/stt-connection";
 import {
   createSttSession,
@@ -177,6 +179,18 @@ export type DebugInfo = {
   unassignedSegments: number;
   turnSpeakerSplits: number;
   turnSpeaker: string;
+  diarizationModel: string;
+  diarizationRequestConfig: string;
+  diarizationRequested: string;
+  diarizationActive: string;
+  rawDiarizedWords: string;
+  rawUniqueSpeakerIds: string;
+  rosterSpeakerIds: string;
+  currentDiarizedSpeaker: string;
+  wordsBySpeaker: string;
+  speakerChangesDetected: number;
+  unknownSpeakerWords: number;
+  rosterEntriesCreated: number;
 
 
   /* --- desktop companion / Zoom Desktop --- */
@@ -293,6 +307,19 @@ export function useCopilotSession(opts: Options) {
   const diarizationActive = useRef(false);
   const [diarizationNote, setDiarizationNote] = useState("off — single interviewer");
   const routingStats = useRef({ routed: 0, ignored: 0, unassigned: 0, splits: 0 });
+  const [diarizationDebug, setDiarizationDebug] = useState({
+    config: null as SttRequestConfig | null,
+    active: false,
+    rawWords: "[]",
+    uniqueIds: [] as number[],
+    currentSpeaker: null as number | null,
+    wordsBySpeaker: {} as Record<string, number>,
+    speakerChanges: 0,
+    unknownWords: 0,
+    rosterEntriesCreated: 0,
+  });
+  const knownRemoteSpeakerIds = useRef<Set<number>>(new Set());
+  const lastDiarizedSpeaker = useRef<number | null>(null);
 
 
 
@@ -375,6 +402,49 @@ export function useCopilotSession(opts: Options) {
       return speaker;
     },
     [publishRoster],
+  );
+
+  const handleDiarizationFrame = useCallback(
+    (frame: DiarizationFrame) => {
+      // Register every raw ID immediately, even when several speakers share one
+      // final Results frame or the utterance is only one word long.
+      let created = 0;
+      for (const id of frame.uniqueSpeakerIds) {
+        if (!knownRemoteSpeakerIds.current.has(id)) {
+          knownRemoteSpeakerIds.current.add(id);
+          resolveSpeaker(String(id), "");
+          created += 1;
+        }
+      }
+
+      let changes = 0;
+      let current = lastDiarizedSpeaker.current;
+      const additions: Record<string, number> = {};
+      for (const word of frame.words) {
+        if (word.speaker == null) continue;
+        additions[String(word.speaker)] = (additions[String(word.speaker)] ?? 0) + 1;
+        if (current != null && current !== word.speaker) changes += 1;
+        current = word.speaker;
+      }
+      lastDiarizedSpeaker.current = current;
+      setDiarizationDebug((prev) => ({
+        ...prev,
+        active: prev.active || frame.uniqueSpeakerIds.length > 0,
+        rawWords: JSON.stringify(frame.words.map(({ word, speaker }) => ({ word, speaker })), null, 2),
+        uniqueIds: [...new Set([...prev.uniqueIds, ...frame.uniqueSpeakerIds])].sort((a, b) => a - b),
+        currentSpeaker: current,
+        wordsBySpeaker: Object.fromEntries(
+          [...new Set([...Object.keys(prev.wordsBySpeaker), ...Object.keys(additions)])].map((id) => [
+            id,
+            (prev.wordsBySpeaker[id] ?? 0) + (additions[id] ?? 0),
+          ]),
+        ),
+        speakerChanges: prev.speakerChanges + changes,
+        unknownWords: prev.unknownWords + frame.missingSpeakerWords,
+        rosterEntriesCreated: prev.rosterEntriesCreated + created,
+      }));
+    },
+    [resolveSpeaker],
   );
 
   const setSpeakerRole = useCallback(
@@ -1559,15 +1629,19 @@ export function useCopilotSession(opts: Options) {
         turnIndex?: number | null;
         /** Diarized remote speaker index, when multi-participant routing is on. */
         speakerId?: string | null;
+        speakerConfidence?: number | null;
+        speakerAttribution?: "diarized" | "unknown" | "not_requested";
       },
     ) => {
       const isRemote = source !== "microphone";
       const mode = optsRef.current.micMode;
 
       // ---- speaker routing (remote streams only, deterministic, no network) ----
+      // Missing IDs in a diarized stream remain REMOTE UNKNOWN. They never create
+      // a fake identity and never inherit the primary interviewer's role.
       const roster =
-        isRemote && optsRef.current.multiParticipant
-          ? resolveSpeaker(result.speakerId ?? null, result.text)
+        isRemote && optsRef.current.multiParticipant && result.speakerId != null
+          ? resolveSpeaker(result.speakerId, result.text)
           : null;
       if (roster && !roleIsHeard(roster.role)) {
         // Explicitly ignored participant: not transcribed into the session, not
@@ -1576,7 +1650,9 @@ export function useCopilotSession(opts: Options) {
         if (result.isFinal) patchDiag({ lastTranscriptSource: `${source} (${roster.label} — ignored)` });
         return;
       }
-      const remoteMayAnswer = !roster || roleDrivesAnswers(roster.role);
+      const remoteMayAnswer = isRemote && optsRef.current.multiParticipant
+        ? Boolean(roster && roleDrivesAnswers(roster.role))
+        : true;
       if (roster && !remoteMayAnswer) routingStats.current.unassigned += 1;
 
       // Only an interviewer-side stream drives the low-latency machine; Helper mode
@@ -1722,7 +1798,7 @@ export function useCopilotSession(opts: Options) {
 
       patchDiag({
         lastTranscriptSource: isRemote
-          ? `${source} (${roster ? speakerTag(roster) : "INTERVIEWER"})`
+          ? `${source} (${roster ? speakerTag(roster) : optsRef.current.multiParticipant ? "REMOTE UNKNOWN" : "INTERVIEWER"})`
             : speaker === "test"
             ? "microphone (HELPER / single source)"
             : "microphone (ME / CANDIDATE)",
@@ -1929,6 +2005,10 @@ export function useCopilotSession(opts: Options) {
             setSttProfile(detail);
           }
         },
+        onRequestConfig: (config) => {
+          if (isRemote) setDiarizationDebug((prev) => ({ ...prev, config }));
+        },
+        onDiarization: isRemote ? handleDiarizationFrame : undefined,
         onState: (state, detail) => {
           setState(state);
           if (state === "error" && detail) pushError(detail);
@@ -1939,7 +2019,7 @@ export function useCopilotSession(opts: Options) {
       void connection.start();
       return connection;
     },
-    [handleResult, pushError],
+    [handleResult, handleDiarizationFrame, pushError],
   );
 
 
@@ -2375,6 +2455,22 @@ export function useCopilotSession(opts: Options) {
       unassignedSegments: routingStats.current.unassigned,
       turnSpeakerSplits: routingStats.current.splits,
       turnSpeaker: turnRef.current?.speakerLabel ?? "—",
+      diarizationModel: diarizationDebug.config?.model ?? "not connected",
+      diarizationRequestConfig: diarizationDebug.config
+        ? `${diarizationDebug.config.endpoint}?model=${diarizationDebug.config.model}&encoding=${diarizationDebug.config.encoding}&sample_rate=${diarizationDebug.config.sampleRate}&channels=${diarizationDebug.config.channels}&interim_results=${diarizationDebug.config.interimResults}&diarize=${diarizationDebug.config.diarizationRequested}`
+        : "not connected",
+      diarizationRequested: diarizationDebug.config?.diarizationRequested ? "yes" : "no",
+      diarizationActive: diarizationDebug.active ? "yes — word-level speaker IDs received" : "no raw speaker IDs received yet",
+      rawDiarizedWords: diarizationDebug.rawWords,
+      rawUniqueSpeakerIds: diarizationDebug.uniqueIds.length ? diarizationDebug.uniqueIds.join(", ") : "none",
+      rosterSpeakerIds: speakers.length ? speakers.map((speaker) => speaker.id).join(", ") : "none",
+      currentDiarizedSpeaker: diarizationDebug.currentSpeaker == null ? "REMOTE UNKNOWN" : String(diarizationDebug.currentSpeaker),
+      wordsBySpeaker: Object.entries(diarizationDebug.wordsBySpeaker).length
+        ? Object.entries(diarizationDebug.wordsBySpeaker).map(([id, count]) => `Speaker ${id}: ${count}`).join(" | ")
+        : "none",
+      speakerChangesDetected: diarizationDebug.speakerChanges,
+      unknownSpeakerWords: diarizationDebug.unknownWords,
+      rosterEntriesCreated: diarizationDebug.rosterEntriesCreated,
       companionState,
 
 
@@ -2419,6 +2515,7 @@ export function useCopilotSession(opts: Options) {
       sttProfile,
       speakers,
       diarizationNote,
+      diarizationDebug,
       turnView,
       turnSilenceMs,
       memoryView,

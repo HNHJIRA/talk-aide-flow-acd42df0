@@ -75,7 +75,7 @@ function LiveSession() {
   const { sessionId } = Route.useParams();
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
-  const [showDebug] = useState(false);
+  const [showDebug] = useState(true);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const [multiParticipant, setMultiParticipant] = useState(true);
@@ -410,8 +410,20 @@ function LiveSession() {
               ["Speculative prep (done/cancelled)", `${debug.speculativePrepared} / ${debug.speculativeCancelled}`],
               ["Local gate rejects / AI classifier calls", `${debug.gateRejected} / ${debug.classifierCalls}`],
 
-              ["— SPEAKER ROUTING —", ""],
-              ["Diarization", debug.diarization],
+              ["— REMOTE DIARIZATION —", ""],
+              ["Diarization enabled", debug.diarization],
+              ["Model", debug.diarizationModel],
+              ["Actual request configuration", debug.diarizationRequestConfig],
+              ["Diarization requested", debug.diarizationRequested],
+              ["Diarization active", debug.diarizationActive],
+              ["Raw unique speaker IDs", debug.rawUniqueSpeakerIds],
+              ["Speaker IDs registered in roster", debug.rosterSpeakerIds],
+              ["Current active speaker", debug.currentDiarizedSpeaker],
+              ["Words by speaker", debug.wordsBySpeaker],
+              ["Speaker changes detected", String(debug.speakerChangesDetected)],
+              ["Unknown / missing speaker words", String(debug.unknownSpeakerWords)],
+              ["Roster entries created", String(debug.rosterEntriesCreated)],
+              ["Raw diarized words (latest final)", debug.rawDiarizedWords],
               ["Remote speakers", debug.remoteSpeakers],
               ["Answers routed from", debug.answersRoutedFrom],
               ["Current turn speaker", debug.turnSpeaker],
