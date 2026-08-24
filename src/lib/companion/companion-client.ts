@@ -1,7 +1,7 @@
 /**
  * Browser-side client for the InterviewCopilot Desktop Companion.
  *
- * The companion is a small Tauri app that captures Zoom Desktop / system output
+ * The companion is a small Tauri app that captures Zoom / Microsoft Teams desktop / system output
  * audio natively (WASAPI loopback on Windows, ScreenCaptureKit on macOS) and
  * exposes an authenticated local bridge:
  *
@@ -95,7 +95,7 @@ export class CompanionBridge {
   constructor(
     private readonly port: number,
     private readonly token: string,
-    private readonly target: "zoom" | "system",
+    private readonly target: "zoom" | "teams" | "system",
     private readonly handlers: Handlers,
   ) {}
 

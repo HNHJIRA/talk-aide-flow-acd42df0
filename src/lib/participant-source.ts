@@ -38,7 +38,13 @@ export function identityConfidence(capability: ParticipantCapability): IdentityC
  * present, Deepgram is used for SPEECH ONLY and never for identity.
  */
 export type ParticipantAudioFrame = {
-  sourceType: "browser_tab" | "zoom_desktop" | "zoom_sdk" | "meet_sdk" | "microphone";
+  sourceType:
+    | "browser_tab"
+    | "zoom_desktop"
+    | "teams_desktop"
+    | "zoom_sdk"
+    | "meet_sdk"
+    | "microphone";
   participantId: string | null;
   participantName: string | null;
   audioFrame: ArrayBuffer;
@@ -54,7 +60,7 @@ export type ParticipantSource = {
 
 /** What a given remote capture can promise before any audio has been heard. */
 export function capabilityForSource(
-  source: "remote_meeting" | "zoom_desktop" | "microphone",
+  source: "remote_meeting" | "desktop_companion" | "microphone",
   diarizationRequested: boolean,
 ): ParticipantCapability {
   if (source === "microphone") return "mixed_audio_only";
