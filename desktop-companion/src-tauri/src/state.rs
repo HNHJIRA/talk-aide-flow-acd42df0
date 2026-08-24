@@ -71,6 +71,8 @@ impl CaptureState {
 pub enum CaptureTarget {
     /// Prefer per-application capture of the Zoom Desktop client.
     Zoom,
+    /// Prefer per-application capture of the Microsoft Teams desktop client.
+    Teams,
     /// Capture the current system output device (loopback).
     System,
 }
@@ -79,12 +81,14 @@ impl CaptureTarget {
     pub fn parse(raw: &str) -> Self {
         match raw {
             "zoom" | "zoom_desktop" => CaptureTarget::Zoom,
+            "teams" | "teams_desktop" | "microsoft_teams" => CaptureTarget::Teams,
             _ => CaptureTarget::System,
         }
     }
     pub fn as_str(self) -> &'static str {
         match self {
             CaptureTarget::Zoom => "zoom",
+            CaptureTarget::Teams => "teams",
             CaptureTarget::System => "system",
         }
     }
@@ -96,6 +100,8 @@ pub enum SourceDetection {
     ZoomDetected,
     ZoomNotDetected,
     ZoomRunningNoAudio,
+    TeamsDetected,
+    TeamsNotDetected,
     SystemFallback,
 }
 
@@ -105,6 +111,8 @@ impl SourceDetection {
             SourceDetection::ZoomDetected => "zoom_detected",
             SourceDetection::ZoomNotDetected => "zoom_not_detected",
             SourceDetection::ZoomRunningNoAudio => "zoom_running_no_audio",
+            SourceDetection::TeamsDetected => "teams_detected",
+            SourceDetection::TeamsNotDetected => "teams_not_detected",
             SourceDetection::SystemFallback => "system_fallback",
         }
     }
