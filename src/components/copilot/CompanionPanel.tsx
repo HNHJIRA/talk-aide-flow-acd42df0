@@ -21,6 +21,8 @@ const TONE: Record<string, "ok" | "pending" | "error" | "off"> = {
   stopped: "off",
 };
 
+const label = (state: CompanionState, app: string) => LABEL[state].replace("{app}", app);
+
 const LABEL: Record<CompanionState, string> = {
   not_installed: "Companion not detected",
   disconnected: "Not connected",
@@ -28,8 +30,8 @@ const LABEL: Record<CompanionState, string> = {
   connected: "Paired — ready to capture",
   requesting_permission: "Waiting for OS audio permission",
   ready: "Ready",
-  capturing: "Capturing Zoom Desktop audio",
-  silent: "Paired but no Zoom audio detected",
+  capturing: "Capturing {app} audio",
+  silent: "Paired but no {app} audio detected",
   reconnecting: "Reconnecting to companion…",
   error: "Companion error",
   stopped: "Stopped",
@@ -43,6 +45,7 @@ const LABEL: Record<CompanionState, string> = {
  */
 export function CompanionPanel({
   sessionId,
+  appLabel = "Zoom Desktop",
   health,
   state,
   level,
@@ -54,6 +57,8 @@ export function CompanionPanel({
   embedded = false,
 }: {
   sessionId: string;
+  /** Which desktop meeting app this session captures (Zoom Desktop, Microsoft Teams Desktop). */
+  appLabel?: string;
   health: CompanionHealth | null;
   state: CompanionState;
   level: number;
@@ -125,14 +130,14 @@ export function CompanionPanel({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-sm font-medium">
-              <Laptop className="size-4 text-primary" /> Zoom Desktop (companion)
+              <Laptop className="size-4 text-primary" /> {appLabel} (companion)
             </p>
             <div className="mt-1.5">
-              <StatusDot label={LABEL[state]} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : ""} />
+              <StatusDot label={label(state, appLabel)} status={TONE[state] ?? "off"} detail={health ? `v${health.version} · ${health.captureBackend}` : ""} />
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <AudioLevelMeter level={level} label="Zoom Desktop" />
+            <AudioLevelMeter level={level} label={appLabel} />
             <Button size="icon" variant="ghost" onClick={() => void onRefresh()} aria-label="Re-check companion">
               <RefreshCw className="size-4" />
             </Button>
@@ -157,11 +162,11 @@ export function CompanionPanel({
           </Button>
         ) : capturing ? (
           <Button size="sm" variant="outline" onClick={onStopCapture}>
-            Stop Zoom capture
+            Stop capture
           </Button>
         ) : (
           <Button size="sm" onClick={onStartCapture}>
-            Connect Zoom Desktop audio
+            Connect {appLabel} audio
           </Button>
         )}
         <Button size="sm" variant="ghost" onClick={onFallback}>
@@ -176,8 +181,8 @@ export function CompanionPanel({
       ) : null}
       {state === "silent" ? (
         <p className="mt-2 text-xs text-warning">
-          The companion is connected but no Zoom audio is arriving — check that Zoom is playing through the selected
-          output device and that screen-recording permission is granted.
+          The companion is connected but no {appLabel} audio is arriving — check that the meeting is playing through
+          the selected output device and that screen-recording permission is granted.
         </p>
       ) : null}
     </div>

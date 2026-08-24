@@ -23,7 +23,8 @@ export const PLATFORM_LABELS: Record<string, string> = {
   google_meet: "Google Meet",
   zoom_web: "Zoom Web",
   zoom_desktop: "Zoom Desktop",
-  teams_web: "Teams Web",
+  teams_web: "Microsoft Teams Web",
+  teams_desktop: "Microsoft Teams Desktop",
   manual: "Microphone only",
   practice: "Practice",
 };

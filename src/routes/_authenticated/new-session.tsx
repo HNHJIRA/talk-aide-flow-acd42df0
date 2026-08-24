@@ -35,6 +35,16 @@ const PLATFORMS = [
     label: "Zoom Desktop",
     hint: "Native app audio via the Desktop Companion (browser tab-share fallback)",
   },
+  {
+    value: "teams_web",
+    label: "Microsoft Teams Web",
+    hint: "Join Teams in the browser, then share that tab's audio",
+  },
+  {
+    value: "teams_desktop",
+    label: "Microsoft Teams Desktop",
+    hint: "Native app audio via the Desktop Companion (browser tab-share fallback)",
+  },
   { value: "manual", label: "Microphone only", hint: "Speakerphone or in-person practice" },
   { value: "practice", label: "Practice mode", hint: "Rehearse with your own questions" },
 ] as const;
@@ -178,13 +188,28 @@ function NewSession() {
           </div>
         </section>
 
-        {platform === "zoom_desktop" ? (
+        {platform === "teams_web" ? (
           <div className="panel border-primary/40 p-4 text-sm text-muted-foreground">
-            <p className="font-medium text-foreground">Zoom Desktop needs the InterviewCopilot Companion</p>
+            <p className="font-medium text-foreground">Microsoft Teams Web</p>
             <p className="mt-1">
-              Browsers cannot record another desktop app's audio. The companion captures Zoom output natively (WASAPI
-              loopback on Windows, ScreenCaptureKit on macOS) and streams it to this session after you pair it. You can
-              pair it in the live room — if it isn't installed, the room falls back to browser tab-audio sharing.
+              Open your Teams meeting in the browser, then share the Teams tab and enable tab audio when the live room
+              asks for meeting audio. Your microphone stays a separate candidate stream.
+            </p>
+          </div>
+        ) : null}
+
+        {platform === "zoom_desktop" || platform === "teams_desktop" ? (
+          <div className="panel border-primary/40 p-4 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">
+              {platform === "teams_desktop" ? "Microsoft Teams Desktop" : "Zoom Desktop"} needs the InterviewCopilot
+              Companion
+            </p>
+            <p className="mt-1">
+              Browsers cannot record another desktop app's audio. The companion captures meeting output natively
+              (WASAPI system playback capture on Windows, ScreenCaptureKit on macOS) and streams it to this session
+              after you pair it. On Windows this is system playback capture, so other system sounds can be included.
+              You can pair it in the live room — if it isn't installed, the room falls back to browser tab-audio
+              sharing.
             </p>
             <div className="mt-3">
               <MacDownloadButton size="sm" />

@@ -75,8 +75,15 @@ import {
   type SpeakerStability,
 } from "@/lib/speaker-stability";
 
-/** Every remote source (meeting tab or Zoom Desktop companion) feeds one INTERVIEWER pipeline. */
-export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop";
+/** Every remote source (meeting tab or a desktop companion) feeds one INTERVIEWER pipeline. */
+export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop" | "teams_desktop";
+
+/** Native-companion capture targets understood by the bridge. */
+export type CompanionTarget = "zoom" | "teams" | "system";
+
+/** True for any native desktop-companion capture (Zoom Desktop, Teams Desktop). */
+export const isDesktopSource = (source: SourceKind) =>
+  source === "zoom_desktop" || source === "teams_desktop";
 
 export type SourceStatus = "disconnected" | "connecting" | "active" | "silent" | "error";
 export type SessionState =
@@ -331,10 +338,12 @@ export function useCopilotSession(opts: Options) {
     microphone: string;
     remote_meeting: string;
     zoom_desktop: string;
+    teams_desktop: string;
   }>({
     microphone: "",
     remote_meeting: "",
     zoom_desktop: "",
+    teams_desktop: "",
   });
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -2256,7 +2265,8 @@ export function useCopilotSession(opts: Options) {
    * explicitly presses "Connect Zoom Desktop Audio" (startCompanionCapture).
    */
   const connectCompanion = useCallback(
-    async (bridgeToken: string, target: "zoom" | "system" = "zoom") => {
+    async (bridgeToken: string, target: CompanionTarget = "zoom") => {
+      const desktopSource: SourceKind = target === "teams" ? "teams_desktop" : "zoom_desktop";
       const health = companionHealth ?? (await refreshCompanion());
       if (!health) {
         setCompanionState("not_installed");
@@ -2268,9 +2278,9 @@ export function useCopilotSession(opts: Options) {
         onState: (state, detail) => {
           setCompanionState(state);
           if (state === "capturing") {
-            remoteSourceRef.current = "zoom_desktop";
+            remoteSourceRef.current = desktopSource;
             setMeetingStatus("active");
-            if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+            if (liveRef.current && !remoteStt_.current) startSttRef.current?.(desktopSource);
           }
           if (state === "silent") setMeetingStatus("silent");
           if (state === "stopped" || state === "disconnected") setMeetingStatus("disconnected");
@@ -2297,9 +2307,9 @@ export function useCopilotSession(opts: Options) {
       pushError("Pair the Desktop Companion first.");
       return;
     }
-    remoteSourceRef.current = "zoom_desktop";
+    if (!isDesktopSource(remoteSourceRef.current)) remoteSourceRef.current = "zoom_desktop";
     companionRef.current.startCapture();
-    if (liveRef.current && !remoteStt_.current) startSttRef.current?.("zoom_desktop");
+    if (liveRef.current && !remoteStt_.current) startSttRef.current?.(remoteSourceRef.current);
   }, [pushError]);
 
   const stopCompanionCapture = useCallback(() => {
@@ -2543,7 +2553,7 @@ export function useCopilotSession(opts: Options) {
   /* ---------------- source capability + routing safety ---------------- */
 
   const participantCapability: ParticipantCapability = capabilityForSource(
-    remoteSourceRef.current === "zoom_desktop" ? "zoom_desktop" : "remote_meeting",
+    isDesktopSource(remoteSourceRef.current) ? "desktop_companion" : "remote_meeting",
     opts.multiParticipant,
   );
   const identityConfidence = getIdentityConfidence(participantCapability);
@@ -2581,7 +2591,7 @@ export function useCopilotSession(opts: Options) {
       meetingTrackLabel: diag.meetingTrackLabel,
       meetingTracksReturned: diag.meetingTracksReturned,
       micLevel,
-      meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
+      meetingLevel: isDesktopSource(remoteSourceRef.current) ? companionLevel : meetingLevel,
       remoteStt,
       localStt,
       remoteCount: counts.current.remote,
@@ -2603,7 +2613,7 @@ export function useCopilotSession(opts: Options) {
           ? "microphone (test mode) + interviewer stream"
           : opts.micMode === "fallback" && opts.fallbackAutoDetect
             ? "microphone (fallback auto-detect) + interviewer stream"
-            : "interviewer stream only (meeting tab / Zoom Desktop)",
+            : "interviewer stream only (meeting tab / desktop companion)",
       sttProfile,
       turnStatus: turnRef.current?.status ?? "listening",
       speculativePrepared: turnStats.current.prepared,
@@ -2738,11 +2748,11 @@ export function useCopilotSession(opts: Options) {
       companionOs: companionHealth?.os ?? "unknown",
       companionBackend: companionHealth?.captureBackend ?? "unknown",
       remoteCaptureMethod:
-        remoteSourceRef.current === "zoom_desktop"
+        isDesktopSource(remoteSourceRef.current)
           ? (companionFormat?.captureMethod ?? "companion (pending)")
           : "browser getDisplayMedia (tab audio)",
       remoteSourceDetected:
-        remoteSourceRef.current === "zoom_desktop"
+        isDesktopSource(remoteSourceRef.current)
           ? companionFormat
             ? companionFormat.sourceDetected
               ? `yes — ${companionFormat.captureTarget}`
@@ -2798,7 +2808,7 @@ export function useCopilotSession(opts: Options) {
     meetingStatus,
     micDeviceLabel,
     micLevel,
-    meetingLevel: remoteSourceRef.current === "zoom_desktop" ? companionLevel : meetingLevel,
+    meetingLevel: isDesktopSource(remoteSourceRef.current) ? companionLevel : meetingLevel,
     localStt,
     remoteStt,
     segments,

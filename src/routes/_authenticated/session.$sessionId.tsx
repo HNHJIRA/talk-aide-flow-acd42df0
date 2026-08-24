@@ -46,7 +46,7 @@ const COMPANION_STATUS: Record<string, string> = {
   requesting_permission: "Waiting for OS audio permission",
   ready: "Ready",
   capturing: "Connected · Interviewer",
-  silent: "Paired — no Zoom audio",
+  silent: "Paired — no meeting audio",
   reconnecting: "Reconnecting…",
   error: "Companion error",
   stopped: "Stopped",
@@ -188,7 +188,13 @@ function LiveSession() {
     answerRemoteSegment,
   } = copilot;
 
+  const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
+  /** Any platform whose interviewer audio comes from the native companion. */
+  const isDesktopCompanion = isZoomDesktop || isTeamsDesktop;
+  const desktopAppLabel = isTeamsDesktop ? "Microsoft Teams Desktop" : "Zoom Desktop";
+  const desktopShortLabel = isTeamsDesktop ? "Teams" : "Zoom";
+  const companionTarget = isTeamsDesktop ? ("teams" as const) : ("zoom" as const);
   const [forceTabFallback, setForceTabFallback] = useState(false);
   const needsMeetingAudio =
     session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
@@ -210,8 +216,8 @@ function LiveSession() {
     generating: questions.some((q) => q.status === "generating"),
     elapsed,
     source:
-      isZoomDesktop && !forceTabFallback
-        ? "Zoom Desktop"
+      isDesktopCompanion && !forceTabFallback
+        ? desktopAppLabel
         : meetingStatus === "active"
           ? "Meeting tab"
           : sttTestMode
@@ -292,9 +298,9 @@ function LiveSession() {
             </span>
           </div>
           <div ref={transcriptRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
-            {interim.remote_meeting || interim.zoom_desktop ? (
+            {interim.remote_meeting || interim.zoom_desktop || interim.teams_desktop ? (
               <p className="text-sm italic text-muted-foreground">
-                {interim.remote_meeting || interim.zoom_desktop}
+                {interim.remote_meeting || interim.zoom_desktop || interim.teams_desktop}
               </p>
             ) : null}
             {interim.microphone ? (
@@ -599,10 +605,10 @@ function LiveSession() {
       <div className="sticky bottom-0 z-20 border-t border-border bg-background/85 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70">
         <div className="flex flex-wrap items-center gap-3">
           {/* interviewer source */}
-          {isZoomDesktop && !forceTabFallback ? (
+          {isDesktopCompanion && !forceTabFallback ? (
             <DockSource
               icon={Laptop}
-              title="Zoom Desktop"
+              title={desktopAppLabel}
               state={
                 companionState === "capturing"
                   ? "connected"
@@ -637,8 +643,9 @@ function LiveSession() {
                       health={companionHealth}
                       state={companionState}
                       level={meetingLevel}
+                      appLabel={desktopAppLabel}
                       onRefresh={refreshCompanion}
-                      onConnect={(token) => connectCompanion(token, "zoom")}
+                      onConnect={(token) => connectCompanion(token, companionTarget)}
                       onStartCapture={startCompanionCapture}
                       onStopCapture={stopCompanionCapture}
                       onFallback={() => setForceTabFallback(true)}
@@ -690,7 +697,7 @@ function LiveSession() {
 
           {needsMeetingAudio &&
           meetingStatus !== "active" &&
-          !(isZoomDesktop && !forceTabFallback) ? (
+          !(isDesktopCompanion && !forceTabFallback) ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -745,14 +752,14 @@ function LiveSession() {
             }
           />
 
-          {isZoomDesktop ? (
+          {isDesktopCompanion ? (
             <div
               role="tablist"
               aria-label="Meeting source"
               className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5"
             >
               {[
-                { key: "zoom", label: "Zoom", icon: Laptop },
+                { key: "app", label: desktopShortLabel, icon: Laptop },
                 { key: "tab", label: "Tab", icon: MonitorSpeaker },
               ].map((option) => {
                 const selected = option.key === "tab" ? forceTabFallback : !forceTabFallback;
@@ -792,7 +799,11 @@ function LiveSession() {
                 ? "Multiple attendees are present, but the audio service has not separated their voices yet."
                 : diarizationNote
             }
-            sourceLabel={isZoomDesktop ? "Zoom Desktop companion audio" : "Browser tab meeting audio"}
+            sourceLabel={
+              isDesktopCompanion
+                ? `${desktopAppLabel} companion audio (mixed)`
+                : "Browser tab meeting audio"
+            }
             capabilityLabel={capabilityLabel}
             separationStatus={speakerSeparationStatus}
             speakerAwareAvailable={speakerAwareAvailable}

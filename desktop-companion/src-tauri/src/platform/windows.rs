@@ -23,26 +23,37 @@ use crate::state::{CaptureTarget, SourceDetection};
 /// Zoom desktop client executables across versions/channels.
 const ZOOM_PROCESS_HINTS: &[&str] = &["zoom.exe", "zoommeetings.exe", "zoom_launcher.exe", "cpthost.exe"];
 
+/// Microsoft Teams desktop executables (new Teams, classic, and work/personal).
+const TEAMS_PROCESS_HINTS: &[&str] = &["ms-teams.exe", "teams.exe", "msteams.exe"];
+
 #[derive(Default)]
 pub struct WasapiBackend;
 
-pub struct ZoomPresence {
+pub struct AppPresence {
     pub running: bool,
     pub process_name: Option<String>,
 }
 
-pub fn detect_zoom() -> ZoomPresence {
+pub fn detect_zoom() -> AppPresence {
+    detect_process(ZOOM_PROCESS_HINTS, "zoom")
+}
+
+pub fn detect_teams() -> AppPresence {
+    detect_process(TEAMS_PROCESS_HINTS, "ms-teams")
+}
+
+fn detect_process(hints: &[&str], prefix: &str) -> AppPresence {
     let mut sys = System::new();
     sys.refresh_processes();
     for process in sys.processes().values() {
         let name = process.name().to_ascii_lowercase();
-        if ZOOM_PROCESS_HINTS.iter().any(|hint| name == *hint)
-            || (name.starts_with("zoom") && name.ends_with(".exe"))
+        if hints.iter().any(|hint| name == *hint)
+            || (name.starts_with(prefix) && name.ends_with(".exe"))
         {
-            return ZoomPresence { running: true, process_name: Some(process.name().to_string()) };
+            return AppPresence { running: true, process_name: Some(process.name().to_string()) };
         }
     }
-    ZoomPresence { running: false, process_name: None }
+    AppPresence { running: false, process_name: None }
 }
 
 impl AudioCaptureBackend for WasapiBackend {
@@ -52,6 +63,7 @@ impl AudioCaptureBackend for WasapiBackend {
 
     fn enumerate_sources(&self) -> Vec<SourceInfo> {
         let zoom = detect_zoom();
+        let teams = detect_teams();
         vec![
             SourceInfo {
                 id: "zoom".into(),
@@ -62,6 +74,16 @@ impl AudioCaptureBackend for WasapiBackend {
                     .unwrap_or_else(|| "Zoom Desktop (not running)".into()),
                 kind: "application".into(),
                 available: zoom.running,
+            },
+            SourceInfo {
+                id: "teams".into(),
+                label: teams
+                    .process_name
+                    .clone()
+                    .map(|p| format!("Microsoft Teams Desktop ({p}) — system playback capture"))
+                    .unwrap_or_else(|| "Microsoft Teams Desktop (not running)".into()),
+                kind: "system_loopback".into(),
+                available: true,
             },
             SourceInfo {
                 id: "system".into(),
@@ -76,7 +98,23 @@ impl AudioCaptureBackend for WasapiBackend {
 
     fn start(&self, target: CaptureTarget) -> Result<StartedCapture> {
         let zoom = detect_zoom();
+        let teams = detect_teams();
+        let app = match target {
+            CaptureTarget::Teams => &teams,
+            _ => &zoom,
+        };
         let (capture_method, capture_target, detection) = match target {
+            CaptureTarget::Teams if teams.running => (
+                // Windows loopback is system-wide: honest about the mix.
+                "WASAPI SYSTEM LOOPBACK",
+                "teams_via_system_output",
+                SourceDetection::TeamsDetected,
+            ),
+            CaptureTarget::Teams => (
+                "WASAPI SYSTEM LOOPBACK",
+                "system",
+                SourceDetection::TeamsNotDetected,
+            ),
             CaptureTarget::Zoom if zoom.running => (
                 // Per-process capture is not yet wired; be honest about what
                 // the audio actually contains.
@@ -99,8 +137,9 @@ impl AudioCaptureBackend for WasapiBackend {
         let mut started = start_system_loopback()?;
         started.capture_method = capture_method.to_string();
         started.capture_target = capture_target.to_string();
-        started.source_process = zoom.process_name.clone();
-        started.source_detected = matches!(detection, SourceDetection::ZoomDetected);
+        started.source_process = app.process_name.clone();
+        started.source_detected =
+            matches!(detection, SourceDetection::ZoomDetected | SourceDetection::TeamsDetected);
         started.source_detection = detection;
         Ok(started)
     }
