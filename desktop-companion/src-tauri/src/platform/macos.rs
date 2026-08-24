@@ -261,7 +261,7 @@ fn start_screencapturekit(target: CaptureTarget) -> Result<StartedCapture> {
     let dropped = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     // The SCStream is created, started, and stopped on this single owner thread.
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<ZoomProbe, String>>();
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<AppProbe, String>>();
     let thread_stop = stop.clone();
     let thread_dropped = dropped.clone();
 
