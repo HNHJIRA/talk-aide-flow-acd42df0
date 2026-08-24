@@ -46,7 +46,7 @@ const COMPANION_STATUS: Record<string, string> = {
   requesting_permission: "Waiting for OS audio permission",
   ready: "Ready",
   capturing: "Connected · Interviewer",
-  silent: "Paired — no Zoom audio",
+  silent: "Paired — no meeting audio",
   reconnecting: "Reconnecting…",
   error: "Companion error",
   stopped: "Stopped",
