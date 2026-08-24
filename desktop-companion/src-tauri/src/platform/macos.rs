@@ -1,7 +1,8 @@
 //! macOS capture backend — real ScreenCaptureKit system/application audio.
 //!
 //! Pipeline:
-//!   SCShareableContent -> pick the Zoom application (bundle id `us.zoom.xos`)
+//!   SCShareableContent -> pick the requested meeting application (Zoom
+//!   `us.zoom.*`, Microsoft Teams `com.microsoft.teams*`)
 //!   -> SCContentFilter (display + including-applications) -> SCStream with
 //!   `capturesAudio = true`, `excludesCurrentProcessAudio = true` -> audio
 //!   CMSampleBuffer -> AudioBufferList -> f32 mono @ native rate -> bounded
@@ -45,8 +46,17 @@ const FRAME_CHANNEL_CAPACITY: usize = 256;
 #[derive(Default)]
 pub struct ScreenCaptureKitBackend;
 
+/// Microsoft Teams desktop bundle identifiers (new Teams, classic, and the
+/// Electron/webview helpers that actually render meeting audio).
+const TEAMS_BUNDLE_IDS: &[&str] = &[
+    "com.microsoft.teams",
+    "com.microsoft.teams2",
+    "com.microsoft.teams.classic",
+    "com.microsoft.teams.helper",
+];
+
 #[derive(Debug, Clone)]
-struct ZoomApp {
+struct MeetingApp {
     name: String,
     bundle_id: String,
 }
@@ -55,6 +65,24 @@ fn is_zoom(bundle_id: &str, name: &str) -> bool {
     ZOOM_BUNDLE_IDS.iter().any(|id| id.eq_ignore_ascii_case(bundle_id))
         || bundle_id.to_ascii_lowercase().starts_with("us.zoom.")
         || name.to_ascii_lowercase().starts_with("zoom")
+}
+
+fn is_teams(bundle_id: &str, name: &str) -> bool {
+    let bundle = bundle_id.to_ascii_lowercase();
+    let app = name.to_ascii_lowercase();
+    TEAMS_BUNDLE_IDS.iter().any(|id| id.eq_ignore_ascii_case(bundle_id))
+        || bundle.starts_with("com.microsoft.teams")
+        || app == "microsoft teams"
+        || app.starts_with("microsoft teams")
+}
+
+/// Does this running application belong to the requested capture target?
+fn matches_target(target: CaptureTarget, bundle_id: &str, name: &str) -> bool {
+    match target {
+        CaptureTarget::Zoom => is_zoom(bundle_id, name),
+        CaptureTarget::Teams => is_teams(bundle_id, name),
+        CaptureTarget::System => false,
+    }
 }
 
 /// Friendly permission-aware wording for any SCShareableContent failure.
@@ -66,12 +94,12 @@ fn shareable_error(err: &SCError) -> String {
     )
 }
 
-fn find_zoom(content: &SCShareableContent) -> Option<ZoomApp> {
+fn find_app(content: &SCShareableContent, target: CaptureTarget) -> Option<MeetingApp> {
     content.applications().into_iter().find_map(|app| {
         let bundle_id = app.bundle_identifier();
         let name = app.application_name();
-        if is_zoom(&bundle_id, &name) {
-            Some(ZoomApp { name, bundle_id })
+        if matches_target(target, &bundle_id, &name) {
+            Some(MeetingApp { name, bundle_id })
         } else {
             None
         }
@@ -86,7 +114,8 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
     fn enumerate_sources(&self) -> Vec<SourceInfo> {
         match SCShareableContent::get() {
             Ok(content) => {
-                let zoom = find_zoom(&content);
+                let zoom = find_app(&content, CaptureTarget::Zoom);
+                let teams = find_app(&content, CaptureTarget::Teams);
                 vec![
                     SourceInfo {
                         id: "zoom".into(),
@@ -96,6 +125,15 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
                             .unwrap_or_else(|| "Zoom Desktop (not running)".into()),
                         kind: "application".into(),
                         available: zoom.is_some(),
+                    },
+                    SourceInfo {
+                        id: "teams".into(),
+                        label: teams
+                            .as_ref()
+                            .map(|t| format!("Microsoft Teams Desktop ({})", t.name))
+                            .unwrap_or_else(|| "Microsoft Teams Desktop (not running)".into()),
+                        kind: "application".into(),
+                        available: teams.is_some(),
                     },
                     SourceInfo {
                         id: "system".into(),
@@ -109,6 +147,12 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
                 SourceInfo {
                     id: "zoom".into(),
                     label: "Zoom Desktop (screen & system audio permission needed)".into(),
+                    kind: "application".into(),
+                    available: false,
+                },
+                SourceInfo {
+                    id: "teams".into(),
+                    label: "Microsoft Teams Desktop (screen & system audio permission needed)".into(),
                     kind: "application".into(),
                     available: false,
                 },
@@ -290,7 +334,7 @@ fn start_screencapturekit(target: CaptureTarget) -> Result<StartedCapture> {
 }
 
 #[derive(Debug, Clone)]
-struct ZoomProbe {
+struct AppProbe {
     capture_target: String,
     source_process: Option<String>,
     device_name: Option<String>,
@@ -302,7 +346,7 @@ fn build_stream(
     target: CaptureTarget,
     frames_tx: Sender<Vec<f32>>,
     dropped: Arc<std::sync::atomic::AtomicU64>,
-) -> Result<(SCStream, ZoomProbe)> {
+) -> Result<(SCStream, AppProbe)> {
     let content = SCShareableContent::get().map_err(|err| anyhow!(shareable_error(&err)))?;
 
     let displays = content.displays();
@@ -310,14 +354,14 @@ fn build_stream(
         .first()
         .ok_or_else(|| anyhow!("macOS reported no capturable display, so system audio is unavailable."))?;
 
-    let zoom = find_zoom(&content);
+    let app_target = find_app(&content, target);
 
-    let (filter, probe) = match (target, &zoom) {
-        (CaptureTarget::Zoom, Some(app)) => {
+    let (filter, probe) = match (target, &app_target) {
+        (CaptureTarget::Zoom | CaptureTarget::Teams, Some(app)) => {
             let apps = content
                 .applications()
                 .into_iter()
-                .filter(|a| is_zoom(&a.bundle_identifier(), &a.application_name()))
+                .filter(|a| matches_target(target, &a.bundle_identifier(), &a.application_name()))
                 .collect::<Vec<_>>();
             let refs: Vec<&SCRunningApplication> = apps.iter().collect();
             let filter = SCContentFilter::create()
@@ -326,16 +370,24 @@ fn build_stream(
                 .build();
             (
                 filter,
-                ZoomProbe {
-                    capture_target: "zoom_application_audio".into(),
+                AppProbe {
+                    capture_target: if target == CaptureTarget::Teams {
+                        "teams_application_audio".into()
+                    } else {
+                        "zoom_application_audio".into()
+                    },
                     source_process: Some(format!("{} ({})", app.name, app.bundle_id)),
                     device_name: None,
                     source_detected: true,
-                    source_detection: SourceDetection::ZoomDetected,
+                    source_detection: if target == CaptureTarget::Teams {
+                        SourceDetection::TeamsDetected
+                    } else {
+                        SourceDetection::ZoomDetected
+                    },
                 },
             )
         }
-        (CaptureTarget::Zoom, None) => {
+        (CaptureTarget::Zoom | CaptureTarget::Teams, None) => {
             // Honest fallback: whole-display audio, clearly labelled as such.
             let filter = SCContentFilter::create()
                 .with_display(display)
@@ -343,12 +395,16 @@ fn build_stream(
                 .build();
             (
                 filter,
-                ZoomProbe {
-                    capture_target: "system".into(),
+                AppProbe {
+                    capture_target: "system_audio_fallback".into(),
                     source_process: None,
                     device_name: None,
                     source_detected: false,
-                    source_detection: SourceDetection::ZoomNotDetected,
+                    source_detection: if target == CaptureTarget::Teams {
+                        SourceDetection::TeamsNotDetected
+                    } else {
+                        SourceDetection::ZoomNotDetected
+                    },
                 },
             )
         }
@@ -359,9 +415,9 @@ fn build_stream(
                 .build();
             (
                 filter,
-                ZoomProbe {
+                AppProbe {
                     capture_target: "system".into(),
-                    source_process: zoom.as_ref().map(|z| z.name.clone()),
+                    source_process: app_target.as_ref().map(|a| a.name.clone()),
                     device_name: None,
                     source_detected: false,
                     source_detection: SourceDetection::SystemFallback,
@@ -403,6 +459,15 @@ mod tests {
         assert!(is_zoom("us.zoom.Something", "Whatever"));
         assert!(is_zoom("com.example.other", "Zoom Workplace"));
         assert!(!is_zoom("com.apple.Safari", "Safari"));
+    }
+
+    #[test]
+    fn recognises_teams_bundle_ids() {
+        assert!(is_teams("com.microsoft.teams2", "Microsoft Teams"));
+        assert!(is_teams("com.microsoft.teams.classic", "Microsoft Teams classic"));
+        assert!(is_teams("com.example.other", "Microsoft Teams (work)"));
+        assert!(!is_teams("us.zoom.xos", "zoom.us"));
+        assert!(!is_teams("com.apple.Safari", "Safari"));
     }
 
     #[test]
