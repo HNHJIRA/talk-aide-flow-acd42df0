@@ -83,7 +83,7 @@ function LiveSession() {
   const { sessionId } = Route.useParams();
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
-  const [showDebug] = useState(true);
+  const [showDebug, setShowDebug] = useState(true);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const [multiParticipant, setMultiParticipant] = useState(true);
