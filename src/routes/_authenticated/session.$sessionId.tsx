@@ -437,8 +437,29 @@ function LiveSession() {
       </div>
 
       {/* ---------- diagnostics drawer ---------- */}
+      <div className="flex items-center justify-between border-t border-border bg-card/60 px-4 py-1.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Diagnostics
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1 text-[11px]"
+          onClick={() => setShowDebug((v) => !v)}
+        >
+          {showDebug ? (
+            <>
+              <ChevronDown className="size-3.5" /> Minimise
+            </>
+          ) : (
+            <>
+              <ChevronUp className="size-3.5" /> Show
+            </>
+          )}
+        </Button>
+      </div>
       {showDebug ? (
-        <div className="max-h-[42vh] overflow-y-auto border-t border-border bg-card/60 px-4 py-3">
+        <div className="max-h-[42vh] overflow-y-auto bg-card/60 px-4 pb-3">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed md:grid-cols-4">
             {[
               ["Mic level", `${Math.round(micLevel * 100)}%`],
