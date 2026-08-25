@@ -14,6 +14,8 @@ import {
   Pin,
   StopCircle,
   Send,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -81,7 +83,7 @@ function LiveSession() {
   const { sessionId } = Route.useParams();
   const navigate = useNavigate();
   const [manual, setManual] = useState("");
-  const [showDebug] = useState(true);
+  const [showDebug, setShowDebug] = useState(true);
   const [sttTestMode, setSttTestMode] = useState(false);
   const [fallbackAutoDetect, setFallbackAutoDetect] = useState(false);
   const [multiParticipant, setMultiParticipant] = useState(true);
@@ -435,8 +437,29 @@ function LiveSession() {
       </div>
 
       {/* ---------- diagnostics drawer ---------- */}
+      <div className="flex items-center justify-between border-t border-border bg-card/60 px-4 py-1.5">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Diagnostics
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1 text-[11px]"
+          onClick={() => setShowDebug((v) => !v)}
+        >
+          {showDebug ? (
+            <>
+              <ChevronDown className="size-3.5" /> Minimise
+            </>
+          ) : (
+            <>
+              <ChevronUp className="size-3.5" /> Show
+            </>
+          )}
+        </Button>
+      </div>
       {showDebug ? (
-        <div className="max-h-[42vh] overflow-y-auto border-t border-border bg-card/60 px-4 py-3">
+        <div className="max-h-[42vh] overflow-y-auto bg-card/60 px-4 pb-3">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed md:grid-cols-4">
             {[
               ["Mic level", `${Math.round(micLevel * 100)}%`],
