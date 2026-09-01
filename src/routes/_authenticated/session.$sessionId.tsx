@@ -245,7 +245,14 @@ function LiveSession() {
             : "Microphone",
     micLabel: micStatus === "active" ? (sttTestMode ? "Helper" : "Candidate") : "Mic off",
     questions,
+    translation: {
+      active: translation.active,
+      language: translation.settings.targetLanguage,
+      mode: translation.settings.overlayMode,
+      translate: translation.translate,
+    },
   });
+
 
   const finish = async () => {
     await endSession();
