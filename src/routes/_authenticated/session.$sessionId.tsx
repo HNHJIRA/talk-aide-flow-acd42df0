@@ -28,6 +28,9 @@ import { CompanionPanel } from "@/components/copilot/CompanionPanel";
 import { OverlayControl } from "@/components/copilot/OverlayControl";
 import { ParticipantsPanel } from "@/components/copilot/ParticipantsPanel";
 import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
+import { useTranslation } from "@/hooks/useTranslation";
+import { TranslationBar } from "@/components/copilot/TranslationBar";
+import { languageLabel } from "@/lib/translation/translation-protocol";
 
 import {
   useCopilotSession,
@@ -116,6 +119,9 @@ function LiveSession() {
     session?.meeting_platform === "manual" || session?.meeting_platform === "practice";
   const micOnlyFallback = isManualPlatform;
 
+  /** Kept in state so the answer pipeline picks up the translation setting. */
+  const [answerLang, setAnswerLang] = useState<string | undefined>(undefined);
+
   const copilot = useCopilotSession({
     sessionId,
     language: session?.answer_language ?? "en",
@@ -129,6 +135,7 @@ function LiveSession() {
     autoAssignFirstSpeaker,
     remoteRoutingMode,
     autoFallbackAllRemote,
+    answerLanguage: answerLang,
   });
 
   const {
@@ -189,6 +196,17 @@ function LiveSession() {
     runPrerecordedControl,
     answerRemoteSegment,
   } = copilot;
+
+  const translation = useTranslation({
+    segments,
+    interim,
+    questions,
+    context: [session?.target_role, session?.company_name].filter(Boolean).join(" · "),
+  });
+
+  useEffect(() => {
+    setAnswerLang(translation.active ? translation.answerLanguage : undefined);
+  }, [translation.active, translation.answerLanguage]);
 
   const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
