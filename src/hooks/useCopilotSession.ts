@@ -313,6 +313,11 @@ type Options = {
   autoAssignFirstSpeaker: boolean;
   remoteRoutingMode: RemoteRoutingMode;
   /**
+   * Optional override from the translation layer: the language code AI answers
+   * must be written in. Falls back to the session's stored language.
+   */
+  answerLanguage?: string;
+  /**
    * When speaker-aware routing is selected but the diarizer never separates a
    * second voice, silently missing a second interviewer's questions is worse
    * than answering every remote voice: fall back to All Remote.
@@ -1058,6 +1063,9 @@ export function useCopilotSession(opts: Options) {
             priorQna,
             isFollowUp,
             packet,
+            ...(optsRef.current.answerLanguage
+              ? { answerLanguage: optsRef.current.answerLanguage }
+              : {}),
           }),
         });
         timer.mark("aiResponseHeaders");
