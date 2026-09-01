@@ -16,6 +16,7 @@ import {
   Send,
   ChevronDown,
   ChevronUp,
+  AudioLines,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,8 @@ import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
 import { useTranslation } from "@/hooks/useTranslation";
 import { TranslationBar } from "@/components/copilot/TranslationBar";
 import { languageLabel } from "@/lib/translation/translation-protocol";
+import { useVoiceInterpreter } from "@/hooks/useVoiceInterpreter";
+import { InterpreterPanel } from "@/components/copilot/InterpreterPanel";
 
 import {
   useCopilotSession,
@@ -208,6 +211,17 @@ function LiveSession() {
     setAnswerLang(translation.active ? translation.answerLanguage : undefined);
   }, [translation.active, translation.answerLanguage]);
 
+  /* Voice Interpreter Mode: additive speech layer on top of translation. */
+  const interpreter = useVoiceInterpreter({
+    segments,
+    translation: translation.settings,
+    detectedLanguage: translation.detectedLanguage,
+    platform: session?.meeting_platform,
+    live: sessionState === "listening",
+    context: [session?.target_role, session?.company_name].filter(Boolean).join(" · "),
+  });
+  const [showInterpreter, setShowInterpreter] = useState(false);
+
   const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
   /** Any platform whose interviewer audio comes from the native companion. */
@@ -251,6 +265,20 @@ function LiveSession() {
       mode: translation.settings.overlayMode,
       translate: translation.translate,
     },
+    ...(interpreter.settings.enabled
+      ? {
+          interpreter: {
+            status: interpreter.status,
+            incomingOriginal: interpreter.latest.incoming?.original ?? "",
+            incomingTranslated: interpreter.latest.incoming?.translated ?? "",
+            outgoingOriginal: interpreter.latest.outgoing?.original ?? "",
+            outgoingTranslated: interpreter.latest.outgoing?.translated ?? "",
+            incomingPair: interpreter.diagnostics.incoming,
+            outgoingPair: interpreter.diagnostics.outgoing,
+            latencyMs: interpreter.diagnostics.totalMs,
+          },
+        }
+      : {}),
   });
 
 
@@ -288,6 +316,18 @@ function LiveSession() {
             status={online ? "ok" : "error"}
             detail={online ? "" : "offline"}
           />
+          <Button
+            size="sm"
+            variant={showInterpreter ? "default" : "outline"}
+            className="h-7 gap-1 text-[11px]"
+            onClick={() => setShowInterpreter((v) => !v)}
+          >
+            <AudioLines className="size-3.5" />
+            Interpreter
+            {interpreter.settings.enabled ? (
+              <span className="ml-1 size-1.5 rounded-full bg-success" />
+            ) : null}
+          </Button>
           <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
         </div>
       </header>
@@ -315,7 +355,34 @@ function LiveSession() {
       />
 
       {/* ---------- main: transcript | questions ---------- */}
-      <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 gap-4 p-4",
+          showInterpreter
+            ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,0.85fr)]"
+            : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]",
+        )}
+      >
+        {showInterpreter ? (
+          <div className="order-3 min-h-0 overflow-y-auto lg:order-3">
+            <InterpreterPanel
+              settings={interpreter.settings}
+              patch={interpreter.patch}
+              status={interpreter.status}
+              diagnostics={interpreter.diagnostics}
+              devices={interpreter.devices}
+              routing={interpreter.routing}
+              latest={interpreter.latest}
+              incomingTarget={interpreter.incomingTarget}
+              outgoingTarget={interpreter.outgoingTarget}
+              interviewerLanguage={translation.detectedLanguage || translation.settings.sourceLanguage}
+              micConnected={micStatus === "active"}
+              onRefreshDevices={() => void interpreter.refreshDevices()}
+              onRequestDevicePermission={() => void interpreter.requestDevicePermission()}
+              onTestVoice={() => void interpreter.testVoice()}
+            />
+          </div>
+        ) : null}
         {/* ---------- left: transcript ---------- */}
         <section className="panel order-2 flex min-h-0 flex-col p-5 lg:order-1">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -540,6 +607,27 @@ function LiveSession() {
                 `${translation.diagnostics.requests} / ${translation.diagnostics.cacheHits} / ${translation.diagnostics.errors}`,
               ],
               ["Translation error", translation.diagnostics.lastError],
+              ["Interpreter", interpreter.diagnostics.status],
+              ["Interpreter incoming", interpreter.diagnostics.incoming],
+              ["Interpreter outgoing", interpreter.diagnostics.outgoing],
+              [
+                "Interpreter latency (capture / translate / tts / output)",
+                `${interpreter.diagnostics.captureMs ?? "—"} / ${
+                  interpreter.diagnostics.translateMs ?? "—"
+                } / ${interpreter.diagnostics.ttsMs ?? "—"} / ${
+                  interpreter.diagnostics.outputMs ?? "—"
+                } ms`,
+              ],
+              [
+                "Interpreter total (last / avg)",
+                `${interpreter.diagnostics.totalMs ?? "—"} / ${
+                  interpreter.diagnostics.avgTotalMs ?? "—"
+                } ms`,
+              ],
+              ["Interpreter output device", interpreter.diagnostics.outputDevice],
+              ["Interpreter virtual mic", interpreter.diagnostics.virtualMic],
+              ["Interpreter echo blocks", String(interpreter.diagnostics.echoGuardBlocks)],
+              ["Interpreter error", interpreter.diagnostics.lastError],
               ["Mic level", `${Math.round(micLevel * 100)}%`],
               ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
               ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],

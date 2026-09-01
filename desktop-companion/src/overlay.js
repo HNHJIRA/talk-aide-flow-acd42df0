@@ -47,6 +47,7 @@ function render(s) {
   aT.hidden = !s.answerTranslated;
   $("question").hidden = translationOnly && Boolean(s.questionTranslated);
   $("answer").hidden = translationOnly && Boolean(s.answerTranslated);
+  renderInterpreter(s.interpreter);
   $("phase").textContent = PHASES[s.phase] ?? "";
   $("counter").textContent = `${s.total ? s.index : 0} / ${s.total || 0}`;
   $("source").textContent = [s.source, s.micLabel].filter(Boolean).join(" · ");
@@ -56,6 +57,37 @@ function render(s) {
   if (mode === "focus" && s.answerStatus === "generating") {
     $("body").scrollTop = $("body").scrollHeight;
   }
+}
+
+const INTERPRETER_STATUS = {
+  listening: "\uD83D\uDFE2 Listening",
+  translating: "\uD83D\uDFE1 Translating",
+  speaking: "\uD83D\uDD35 Speaking",
+  error: "\uD83D\uDD34 Error",
+};
+
+/** Voice Interpreter Mode block; hidden entirely when the feature is off. */
+function renderInterpreter(i) {
+  const block = $("interpreterBlock");
+  if (!block) return;
+  if (!i || i.status === "off") {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+  $("interpreterStatus").textContent = `${INTERPRETER_STATUS[i.status] ?? ""}${
+    i.latencyMs ? ` · ${i.latencyMs} ms` : ""
+  }`;
+  $("interpreterIncoming").textContent = i.incomingOriginal
+    ? `Interviewer: ${i.incomingOriginal}`
+    : `Incoming: ${i.incomingPair || ""}`;
+  const it = $("interpreterIncomingT");
+  it.textContent = i.incomingTranslated || "";
+  it.hidden = !i.incomingTranslated;
+  $("interpreterOutgoing").textContent = i.outgoingOriginal ? `You: ${i.outgoingOriginal}` : "";
+  const ot = $("interpreterOutgoingT");
+  ot.textContent = i.outgoingTranslated ? `Sent: ${i.outgoingTranslated}` : "";
+  ot.hidden = !i.outgoingTranslated;
 }
 
 listen("overlay://update", (event) => render(event.payload));

@@ -41,6 +41,17 @@ export type OverlaySnapshot = {
   translationLanguage?: string;
   /** "translation_only" hides the original text in the bubble. */
   translationMode?: "translation_only" | "original_and_translation";
+  /** Voice Interpreter Mode (omitted entirely when interpreter mode is off). */
+  interpreter?: {
+    status: "off" | "listening" | "translating" | "speaking" | "error";
+    incomingOriginal: string;
+    incomingTranslated: string;
+    outgoingOriginal: string;
+    outgoingTranslated: string;
+    incomingPair: string;
+    outgoingPair: string;
+    latencyMs: number | null;
+  };
   /** Bumps whenever the same logical turn is revised, so stale text is dropped. */
   revision: number;
   at: number;
