@@ -35,6 +35,12 @@ export type OverlaySnapshot = {
   askedBy: string;
   answer: string;
   answerStatus: "none" | "generating" | "answered" | "error" | "stopped";
+  /** Translation layer (empty when translation is off). */
+  questionTranslated?: string;
+  answerTranslated?: string;
+  translationLanguage?: string;
+  /** "translation_only" hides the original text in the bubble. */
+  translationMode?: "translation_only" | "original_and_translation";
   /** Bumps whenever the same logical turn is revised, so stale text is dropped. */
   revision: number;
   at: number;

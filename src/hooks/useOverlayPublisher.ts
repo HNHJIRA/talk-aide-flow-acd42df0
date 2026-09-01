@@ -35,6 +35,13 @@ export type OverlayInput = {
   source: string;
   micLabel: string;
   questions: QuestionItem[];
+  /** Optional translation layer; returns null when nothing is translated yet. */
+  translation?: {
+    active: boolean;
+    language: string;
+    mode: "translation_only" | "original_and_translation";
+    translate: (text: string) => string | null;
+  };
 };
 
 export function useOverlayPublisher(input: OverlayInput) {
@@ -223,6 +230,14 @@ export function useOverlayPublisher(input: OverlayInput) {
       askedBy: current?.askedBy ?? "",
       answer: current?.answer ?? "",
       answerStatus: current ? current.status : "none",
+      ...(input.translation?.active && current
+        ? {
+            questionTranslated: input.translation.translate(current.text) ?? "",
+            answerTranslated: input.translation.translate(current.answer) ?? "",
+            translationLanguage: input.translation.language,
+            translationMode: input.translation.mode,
+          }
+        : {}),
       revision: current ? current.answer.length : 0,
       at: Date.now(),
     };
