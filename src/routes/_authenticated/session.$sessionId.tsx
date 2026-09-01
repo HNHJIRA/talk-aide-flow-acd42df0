@@ -135,7 +135,7 @@ function LiveSession() {
     autoAssignFirstSpeaker,
     remoteRoutingMode,
     autoFallbackAllRemote,
-    answerLanguage: answerLang,
+    ...(answerLang ? { answerLanguage: answerLang } : {}),
   });
 
   const {
