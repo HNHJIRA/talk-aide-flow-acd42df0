@@ -82,6 +82,7 @@ async fn health(State(state): State<Shared>, headers: HeaderMap) -> Response {
         "os": crate::platform::os_key(),
         "platform": crate::platform::os_key(),
         "captureBackend": crate::platform::backend_name(),
+        "outputBackend": crate::audio::output::backend_name(),
         "captureState": inner.state.as_str(),
         "paired": inner.pairing.is_some(),
     });
@@ -226,6 +227,36 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 let mut snap = state.snapshot();
                 snap["type"] = json!("status");
                 let _ = local_tx.send(Message::Text(snap.to_string())).await;
+            }
+            // Voice Interpreter Mode: OUTPUT-only path. Never touches capture.
+            "interpreter_output_open" => {
+                let device = value.get("deviceId").and_then(|v| v.as_str()).unwrap_or("");
+                let rate = value
+                    .get("sampleRate")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(TARGET_SAMPLE_RATE as u64) as u32;
+                state.output.open(device, rate);
+                let _ = local_tx
+                    .send(Message::Text(
+                        json!({
+                            "type": "interpreter_output_open",
+                            "backend": crate::audio::output::backend_name(),
+                            "deviceId": device,
+                            "sampleRate": rate,
+                        })
+                        .to_string(),
+                    ))
+                    .await;
+            }
+            "interpreter_output_pcm" => {
+                if let Some(arr) = value.get("samples").and_then(|v| v.as_array()) {
+                    let samples: Vec<f32> =
+                        arr.iter().filter_map(|v| v.as_f64()).map(|v| v as f32).collect();
+                    state.output.write(samples);
+                }
+            }
+            "interpreter_output_close" => {
+                state.output.close();
             }
             "ping" => {
                 let _ = local_tx.send(Message::Text(json!({ "type": "pong" }).to_string())).await;

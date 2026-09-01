@@ -4,6 +4,7 @@
 //! allocation-heavy step (downmix, resample, serialization) happens on the
 //! worker thread below.
 
+pub mod output;
 pub mod resample;
 
 use std::sync::atomic::{AtomicBool, Ordering};

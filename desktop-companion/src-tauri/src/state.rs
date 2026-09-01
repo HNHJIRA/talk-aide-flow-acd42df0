@@ -211,6 +211,8 @@ pub struct AppState {
     /// Set by whichever component owns the running capture thread.
     pub capture_stop: RwLock<Option<Arc<std::sync::atomic::AtomicBool>>>,
     pub capture_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// Voice Interpreter Mode output router (OUTPUT only; capture untouched).
+    pub output: crate::audio::output::OutputHandle,
 }
 
 pub type Shared = Arc<AppState>;
@@ -241,6 +243,7 @@ impl AppState {
             overlay_tx,
             capture_stop: RwLock::new(None),
             capture_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            output: crate::audio::output::spawn(),
         })
     }
 

@@ -42,6 +42,8 @@ export type OverlayInput = {
     mode: "translation_only" | "original_and_translation";
     translate: (text: string) => string | null;
   };
+  /** Voice Interpreter Mode snapshot (optional, additive). */
+  interpreter?: OverlaySnapshot["interpreter"];
 };
 
 export function useOverlayPublisher(input: OverlayInput) {
@@ -237,6 +239,9 @@ export function useOverlayPublisher(input: OverlayInput) {
             translationLanguage: input.translation.language,
             translationMode: input.translation.mode,
           }
+        : {}),
+      ...(input.interpreter && input.interpreter.status !== "off"
+        ? { interpreter: input.interpreter }
         : {}),
       revision: current ? current.answer.length : 0,
       at: Date.now(),
