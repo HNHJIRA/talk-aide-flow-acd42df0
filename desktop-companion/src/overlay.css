@@ -260,3 +260,10 @@ body[data-fields="question"] #answerBlock,
 body[data-fields="answer"] #questionBlock {
   display: none;
 }
+
+/* Translation layer: the translated line sits under the original, dimmer. */
+.translated {
+  margin-top: 2px;
+  color: var(--accent, #7dd3fc);
+  opacity: 0.9;
+}

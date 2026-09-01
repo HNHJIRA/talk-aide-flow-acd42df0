@@ -28,6 +28,9 @@ import { CompanionPanel } from "@/components/copilot/CompanionPanel";
 import { OverlayControl } from "@/components/copilot/OverlayControl";
 import { ParticipantsPanel } from "@/components/copilot/ParticipantsPanel";
 import { useOverlayPublisher } from "@/hooks/useOverlayPublisher";
+import { useTranslation } from "@/hooks/useTranslation";
+import { TranslationBar } from "@/components/copilot/TranslationBar";
+import { languageLabel } from "@/lib/translation/translation-protocol";
 
 import {
   useCopilotSession,
@@ -116,6 +119,9 @@ function LiveSession() {
     session?.meeting_platform === "manual" || session?.meeting_platform === "practice";
   const micOnlyFallback = isManualPlatform;
 
+  /** Kept in state so the answer pipeline picks up the translation setting. */
+  const [answerLang, setAnswerLang] = useState<string | undefined>(undefined);
+
   const copilot = useCopilotSession({
     sessionId,
     language: session?.answer_language ?? "en",
@@ -129,6 +135,7 @@ function LiveSession() {
     autoAssignFirstSpeaker,
     remoteRoutingMode,
     autoFallbackAllRemote,
+    ...(answerLang ? { answerLanguage: answerLang } : {}),
   });
 
   const {
@@ -190,6 +197,17 @@ function LiveSession() {
     answerRemoteSegment,
   } = copilot;
 
+  const translation = useTranslation({
+    segments,
+    interim,
+    questions,
+    context: [session?.target_role, session?.company_name].filter(Boolean).join(" · "),
+  });
+
+  useEffect(() => {
+    setAnswerLang(translation.active ? translation.answerLanguage : undefined);
+  }, [translation.active, translation.answerLanguage]);
+
   const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
   /** Any platform whose interviewer audio comes from the native companion. */
@@ -227,7 +245,14 @@ function LiveSession() {
             : "Microphone",
     micLabel: micStatus === "active" ? (sttTestMode ? "Helper" : "Candidate") : "Mic off",
     questions,
+    translation: {
+      active: translation.active,
+      language: translation.settings.targetLanguage,
+      mode: translation.settings.overlayMode,
+      translate: translation.translate,
+    },
   });
+
 
   const finish = async () => {
     await endSession();
@@ -280,6 +305,15 @@ function LiveSession() {
         </div>
       ) : null}
 
+      <TranslationBar
+        settings={translation.settings}
+        patch={translation.patch}
+        active={translation.active}
+        detectedLanguage={translation.detectedLanguage}
+        answerLanguage={translation.answerLanguage}
+        onSwap={translation.swapLanguages}
+      />
+
       {/* ---------- main: transcript | questions ---------- */}
       <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         {/* ---------- left: transcript ---------- */}
@@ -301,9 +335,16 @@ function LiveSession() {
           </div>
           <div ref={transcriptRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-2">
             {interim.remote_meeting || interim.zoom_desktop || interim.teams_desktop ? (
-              <p className="text-sm italic text-muted-foreground">
-                {interim.remote_meeting || interim.zoom_desktop || interim.teams_desktop}
-              </p>
+              <div className="space-y-0.5">
+                <p className="text-sm italic text-muted-foreground">
+                  {interim.remote_meeting || interim.zoom_desktop || interim.teams_desktop}
+                </p>
+                {translation.active && translation.partialTranslation ? (
+                  <p className="text-sm italic text-primary/80">
+                    {translation.partialTranslation}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             {interim.microphone ? (
               <p className="text-sm italic text-muted-foreground">{interim.microphone}</p>
@@ -331,6 +372,11 @@ function LiveSession() {
                       : "You"}
                 </span>
                   <span className="text-foreground/90">{segment.text}</span>
+                  {translation.active && translation.translate(segment.text) ? (
+                    <span className="mt-0.5 block text-primary/80">
+                      {translation.translate(segment.text)}
+                    </span>
+                  ) : null}
                 </p>
                 {remoteRoutingMode === "manual" && segment.source !== "microphone" ? (
                   <Button
@@ -395,7 +441,14 @@ function LiveSession() {
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-sm font-medium">{question.text}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{question.text}</p>
+                    {translation.active && translation.translate(question.text) ? (
+                      <p className="mt-0.5 text-sm text-primary/80">
+                        {translation.translate(question.text)}
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex shrink-0 gap-1">
                     <Button size="icon" variant="ghost" onClick={() => void togglePin(question.id)}>
                       <Pin
@@ -422,6 +475,11 @@ function LiveSession() {
                     <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-primary align-middle" />
                   ) : null}
                 </p>
+                {translation.active && translation.translate(question.answer) ? (
+                  <p className="mt-2 whitespace-pre-wrap border-t border-border/60 pt-2 text-sm leading-relaxed text-primary/80">
+                    {translation.translate(question.answer)}
+                  </p>
+                ) : null}
                 {question.status === "error" ? (
                   <p className="mt-2 text-xs text-destructive">Answer failed — try regenerating.</p>
                 ) : null}
@@ -462,6 +520,26 @@ function LiveSession() {
         <div className="max-h-[42vh] overflow-y-auto bg-card/60 px-4 pb-3">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg bg-muted p-3 text-[11px] leading-relaxed md:grid-cols-4">
             {[
+              ["Translation", translation.diagnostics.status],
+              [
+                "Translation languages",
+                `${languageLabel(translation.diagnostics.sourceLanguage)} → ${languageLabel(
+                  translation.diagnostics.targetLanguage,
+                )}`,
+              ],
+              ["Answer language", languageLabel(translation.diagnostics.answerLanguage)],
+              ["Translation provider", translation.diagnostics.provider],
+              [
+                "Translation latency (last / avg)",
+                `${translation.diagnostics.lastLatencyMs ?? "—"} / ${
+                  translation.diagnostics.avgLatencyMs ?? "—"
+                } ms`,
+              ],
+              [
+                "Translation requests / cache / errors",
+                `${translation.diagnostics.requests} / ${translation.diagnostics.cacheHits} / ${translation.diagnostics.errors}`,
+              ],
+              ["Translation error", translation.diagnostics.lastError],
               ["Mic level", `${Math.round(micLevel * 100)}%`],
               ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
               ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],

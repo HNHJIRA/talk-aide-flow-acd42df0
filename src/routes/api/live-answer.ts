@@ -11,6 +11,8 @@ type Body = {
   priorQna?: string;
   answerStyle?: string;
   answerLength?: string;
+  /** Translation layer override: language code the answer must be written in. */
+  answerLanguage?: string;
   isFollowUp?: boolean;
   /** Compact conversational context packet (meeting memory, corrections, sub-questions). */
   packet?: {
@@ -140,7 +142,7 @@ export const Route = createFileRoute("/api/live-answer")({
         /* ---------------- prompt ---------------- */
         const promptStart = Date.now();
         const { messages, stats } = buildLiveMessages({
-          ctx,
+          ctx: body.answerLanguage ? { ...ctx, answerLanguage: body.answerLanguage } : ctx,
           style: body.answerStyle ?? ctx.answerStyle,
           length: body.answerLength ?? ctx.answerLength,
           question: body.questionText,

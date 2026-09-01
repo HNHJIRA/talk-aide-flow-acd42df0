@@ -37,6 +37,16 @@ function render(s) {
   asked.hidden = !s.askedBy;
   $("answer").textContent =
     s.answer || (s.answerStatus === "generating" ? "…" : s.answerStatus === "error" ? "Answer failed." : "—");
+  // Translation layer: show the translated line under (or instead of) the original.
+  const translationOnly = s.translationMode === "translation_only";
+  const qT = $("questionTranslated");
+  const aT = $("answerTranslated");
+  qT.textContent = s.questionTranslated || "";
+  qT.hidden = !s.questionTranslated;
+  aT.textContent = s.answerTranslated || "";
+  aT.hidden = !s.answerTranslated;
+  $("question").hidden = translationOnly && Boolean(s.questionTranslated);
+  $("answer").hidden = translationOnly && Boolean(s.answerTranslated);
   $("phase").textContent = PHASES[s.phase] ?? "";
   $("counter").textContent = `${s.total ? s.index : 0} / ${s.total || 0}`;
   $("source").textContent = [s.source, s.micLabel].filter(Boolean).join(" · ");

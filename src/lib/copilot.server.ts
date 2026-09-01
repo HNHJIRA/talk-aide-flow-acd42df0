@@ -181,14 +181,26 @@ const STYLE_RULES: Record<string, string> = {
   more_detail: "Give a deeper answer with concrete specifics drawn only from the provided context.",
 };
 
+/**
+ * Language rules that a bare BCP-47 code cannot express — notably
+ * transliterations, which the model must not render in the native script.
+ */
+const LANGUAGE_RULES: Record<string, string> = {
+  roman_ur:
+    "Write the answer in Roman Urdu: Urdu spoken naturally but typed in Latin script (e.g. 'Main ne yeh project lead kiya tha'). Never use Arabic script. Keep technical terms, product names and acronyms in English.",
+  ur: "Write the answer in Urdu using Arabic script. Keep technical terms, product names and acronyms in English.",
+  hi: "Write the answer in Hindi using Devanagari script. Keep technical terms, product names and acronyms in English.",
+};
+
 export function answerInstructions(style: string, length: string, language: string) {
   return [
     STYLE_RULES[style] ?? STYLE_RULES["natural"],
     LENGTH_RULES[length] ?? LENGTH_RULES["short"],
-    `Write the answer in this language code: ${language}.`,
+    LANGUAGE_RULES[language] ?? `Write the answer in this language code: ${language}.`,
     "Bold at most a few key terms. Never add preambles like 'Here is your answer'.",
   ].join(" ");
 }
+
 
 /** Keyword/full-text retrieval over the candidate's document chunks. */
 export async function retrieveContext(
