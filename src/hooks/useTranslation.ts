@@ -87,11 +87,6 @@ export function useTranslation(input: Input) {
   const contextRef = useRef(input.context ?? "");
   contextRef.current = input.context ?? "";
 
-  const key = useCallback(
-    (text: string, to: string) => `${source}|${to}|${text}`,
-    [source],
-  );
-
   /** Translate once, memoised. Returns null while the request is in flight. */
   const request = useCallback(
     async (text: string, to: LanguageCode, partial: boolean): Promise<string | null> => {
@@ -163,7 +158,8 @@ export function useTranslation(input: Input) {
       if (cache.current.has(`${source}|${to}|${segment.text}`)) continue;
       void request(segment.text, to, false);
     }
-  }, [active, request, segments Key(translatableSegments), settings, source, target]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, request, segmentsKey(translatableSegments), settings, source, target]);
 
   /* ---------------- progressive interim translation ---------------- */
 
