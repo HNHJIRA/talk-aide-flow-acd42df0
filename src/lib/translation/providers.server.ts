@@ -207,9 +207,7 @@ export async function translateWithBestProvider(
   const available = availableProviders();
   if (!available.length) throw new Error("No translation provider is configured.");
 
-  const transliteration = TRANSLITERATION_TARGETS.includes(
-    req.target as (typeof TRANSLITERATION_TARGETS)[number],
-  );
+  const transliteration = (TRANSLITERATION_TARGETS as string[]).includes(req.target);
 
   let order: Exclude<TranslationProviderId, "auto">[];
   if (transliteration) {
