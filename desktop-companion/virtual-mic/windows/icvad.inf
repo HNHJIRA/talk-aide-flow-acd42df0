@@ -1,0 +1,80 @@
+; InterviewCopilot Virtual Audio Device
+; Publishes one render endpoint ("InterviewCopilot Virtual Audio") and one
+; capture endpoint ("InterviewCopilot Virtual Microphone") backed by an
+; internal loopback ring buffer. Built from the WDK SysVAD audio sample.
+;
+; Build + attestation signing steps: see BUILD.md (must run on Windows/WDK).
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ManufacturerName%
+CatalogFile = icvad.cat
+DriverVer   =
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+icvad.sys = 1,,
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64.10.0...19041,NTarm64.10.0...19041
+
+[Standard.NTamd64.10.0...19041]
+%ICVAD.DeviceDesc% = ICVAD_Install, ROOT\InterviewCopilotAudio
+
+[Standard.NTarm64.10.0...19041]
+%ICVAD.DeviceDesc% = ICVAD_Install, ROOT\InterviewCopilotAudio
+
+[ICVAD_Install.CopyFiles]
+icvad.sys
+
+[ICVAD_Install]
+CopyFiles = ICVAD_Install.CopyFiles
+
+[ICVAD_Install.Services]
+AddService = icvad,0x00000002,ICVAD_Service
+
+[ICVAD_Service]
+DisplayName   = %ICVAD.SvcDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %13%\icvad.sys
+
+; --- Endpoints -------------------------------------------------------------
+[ICVAD_Install.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_Render%,ICVAD_Render.Interface
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_Capture%,ICVAD_Capture.Interface
+
+[ICVAD_Render.Interface]
+AddReg = ICVAD_Render.Interface.AddReg
+
+[ICVAD_Render.Interface.AddReg]
+HKR,,FriendlyName,,%ICVAD.Render.FriendlyName%
+HKR,,CLSID,,%Proxy.CLSID%
+
+[ICVAD_Capture.Interface]
+AddReg = ICVAD_Capture.Interface.AddReg
+
+[ICVAD_Capture.Interface.AddReg]
+HKR,,FriendlyName,,%ICVAD.Capture.FriendlyName%
+HKR,,CLSID,,%Proxy.CLSID%
+
+[Strings]
+ManufacturerName            = "InterviewCopilot"
+DiskName                    = "InterviewCopilot Virtual Audio Installation Disk"
+ICVAD.DeviceDesc            = "InterviewCopilot Virtual Audio Device"
+ICVAD.SvcDesc               = "InterviewCopilot Virtual Audio Service"
+ICVAD.Render.FriendlyName   = "InterviewCopilot Virtual Audio"
+ICVAD.Capture.FriendlyName  = "InterviewCopilot Virtual Microphone"
+KSCATEGORY_AUDIO            = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSNAME_Render               = "ICVADRender"
+KSNAME_Capture              = "ICVADCapture"
+Proxy.CLSID                 = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
