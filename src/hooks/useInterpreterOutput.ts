@@ -17,7 +17,10 @@ import {
 import { decodeSpeechToPcm16 } from "@/lib/audio/interpreter-output/pcm";
 import {
   EMPTY_NATIVE_STATS,
+  EMPTY_VIRTUAL_MIC,
+  VIRTUAL_MIC_DEVICE_ID,
   NativeInterpreterOutput,
+  type VirtualMicStatus,
   type NativeOutputState,
   type NativeOutputStats,
 } from "@/lib/audio/interpreter-output/native-output-client";
@@ -40,6 +43,8 @@ export type InterpreterOutputController = {
   disconnect: () => void;
   /** Returns true when the utterance was rendered natively. */
   speak: (base64: string) => Promise<boolean>;
+  /** Branded InterviewCopilot Virtual Microphone health (Phase 2). */
+  virtualMic: VirtualMicStatus;
   lastEncodeMs: number | null;
 };
 
@@ -51,6 +56,7 @@ export function useInterpreterOutput(input: Input): InterpreterOutputController 
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastEncodeMs, setLastEncodeMs] = useState<number | null>(null);
+  const [virtualMic, setVirtualMic] = useState<VirtualMicStatus>(EMPTY_VIRTUAL_MIC);
 
   const client = useRef<NativeInterpreterOutput | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -77,6 +83,7 @@ export function useInterpreterOutput(input: Input): InterpreterOutputController 
         if (d) setDetail(d);
       },
       onStats: setStats,
+      onVirtualMic: setVirtualMic,
     });
     client.current = c;
     c.connect(deviceId);
@@ -103,7 +110,7 @@ export function useInterpreterOutput(input: Input): InterpreterOutputController 
             if (poll.current) clearInterval(poll.current);
             poll.current = null;
             setPairingCode(null);
-            attach(health.port, st.bridgeToken, input.deviceId ?? "");
+            attach(health.port, st.bridgeToken, input.deviceId ?? VIRTUAL_MIC_DEVICE_ID);
           } else if (st.status === "expired" || st.status === "revoked") {
             if (poll.current) clearInterval(poll.current);
             poll.current = null;
@@ -131,11 +138,12 @@ export function useInterpreterOutput(input: Input): InterpreterOutputController 
     client.current = null;
     setState("disabled");
     setStats(EMPTY_NATIVE_STATS);
+    setVirtualMic(EMPTY_VIRTUAL_MIC);
   }, []);
 
   /** Re-bind when the user picks a different native output device. */
   useEffect(() => {
-    if (client.current?.connected) client.current.open(input.deviceId ?? "");
+    if (client.current?.connected) client.current.open(input.deviceId ?? VIRTUAL_MIC_DEVICE_ID);
   }, [input.deviceId]);
 
   useEffect(
@@ -178,6 +186,7 @@ export function useInterpreterOutput(input: Input): InterpreterOutputController 
     connect,
     disconnect,
     speak,
+    virtualMic,
     lastEncodeMs,
   };
 }

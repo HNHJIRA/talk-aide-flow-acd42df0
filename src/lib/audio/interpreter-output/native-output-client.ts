@@ -55,9 +55,49 @@ export const EMPTY_NATIVE_STATS: NativeOutputStats = {
   lastError: "",
 };
 
+/** Phase 2: branded InterviewCopilot Virtual Microphone health. */
+export type VirtualMicStatus = {
+  installed: boolean;
+  active: boolean;
+  deviceName: string;
+  renderEndpoint: string;
+  platform: string;
+  thirdPartyDevices: string[];
+  installHint: string;
+  level: number;
+  framesRendered: number;
+  droppedFrames: number;
+  latencyMs: number;
+  consumer: string;
+  note: string;
+};
+
+export const EMPTY_VIRTUAL_MIC: VirtualMicStatus = {
+  installed: false,
+  active: false,
+  deviceName: "InterviewCopilot Virtual Microphone",
+  renderEndpoint: "InterviewCopilot Virtual Audio",
+  platform: "unknown",
+  thirdPartyDevices: [],
+  installHint: "",
+  level: 0,
+  framesRendered: 0,
+  droppedFrames: 0,
+  latencyMs: 0,
+  consumer: "",
+  note: "",
+};
+
+/**
+ * Device-id sentinel meaning "render into the branded virtual microphone if
+ * it is installed, otherwise the system default" (resolved by the companion).
+ */
+export const VIRTUAL_MIC_DEVICE_ID = "interviewcopilot-virtual-mic";
+
 type Handlers = {
   onState: (state: NativeOutputState, detail?: string) => void;
   onStats: (stats: NativeOutputStats) => void;
+  onVirtualMic?: (status: VirtualMicStatus) => void;
 };
 
 /** ~40 ms of 16 kHz mono audio per binary frame. */
@@ -108,6 +148,12 @@ export class NativeInterpreterOutput {
         case "interpreter_output_open":
           this.opened = true;
           this.handlers.onState("ready");
+          break;
+        case "virtual_mic_status":
+          this.handlers.onVirtualMic?.({
+            ...EMPTY_VIRTUAL_MIC,
+            ...(msg as object),
+          } as VirtualMicStatus);
           break;
         case "interpreter_output_stats":
           this.handlers.onStats({ ...EMPTY_NATIVE_STATS, ...(msg as object) } as NativeOutputStats);
@@ -164,6 +210,7 @@ export class NativeInterpreterOutput {
     this.statsTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: "interpreter_output_stats" }));
+        this.ws.send(JSON.stringify({ type: "virtual_mic_status" }));
       }
     }, 1000);
   }

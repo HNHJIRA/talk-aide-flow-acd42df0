@@ -74,6 +74,8 @@ export function InterpreterOutputDiagnostics({
       </div>
       {s.lastError ? <p className="text-[11px] text-red-400">{s.lastError}</p> : null}
 
+      <VirtualMicBlock output={output} />
+
       <div className="flex gap-2">
         <Button
           size="sm"
@@ -94,6 +96,52 @@ export function InterpreterOutputDiagnostics({
           Disconnect
         </Button>
       </div>
+    </div>
+  );
+}
+
+function VirtualMicBlock({ output }: { output: InterpreterOutputController }) {
+  const vm = output.virtualMic;
+  const levelPct = Math.round(Math.min(1, vm.level) * 100);
+  return (
+    <div className="rounded-md border border-border/60 bg-background/40 p-2 space-y-2">
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "h-2 w-2 rounded-full",
+            vm.active ? "bg-emerald-500" : vm.installed ? "bg-amber-500" : "bg-muted-foreground/50",
+          )}
+        />
+        <p className="text-[11px] font-medium">Virtual Mic</p>
+        <span className="text-[10px] text-muted-foreground">
+          {vm.installed ? (vm.active ? "installed · active" : "installed · idle") : "not installed"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-[11px]">
+        <Metric label="Device name" value={vm.deviceName} />
+        <Metric label="Connected app" value={vm.consumer || "—"} />
+        <Metric label="Audio level" value={`${levelPct}%`} />
+        <Metric label="Latency" value={`${vm.latencyMs} ms`} />
+        <Metric label="Dropped frames" value={String(vm.droppedFrames)} />
+        <Metric label="Platform" value={vm.platform} />
+      </div>
+
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-emerald-500 transition-[width] duration-150"
+          style={{ width: `${levelPct}%` }}
+        />
+      </div>
+
+      {vm.installHint ? (
+        <p className="text-[11px] text-muted-foreground">{vm.installHint}</p>
+      ) : null}
+      {vm.thirdPartyDevices.length > 0 ? (
+        <p className="text-[10px] text-muted-foreground">
+          Third-party cables detected ({vm.thirdPartyDevices.join(", ")}) — not required.
+        </p>
+      ) : null}
     </div>
   );
 }

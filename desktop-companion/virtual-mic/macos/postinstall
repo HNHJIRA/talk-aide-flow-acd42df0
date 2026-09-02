@@ -1,0 +1,18 @@
+#!/bin/bash
+# macOS .pkg postinstall script for the InterviewCopilot Companion.
+# Installs the CoreAudio virtual device shipped inside the app bundle.
+set -euo pipefail
+
+APP_RESOURCES="/Applications/InterviewCopilot Companion.app/Contents/Resources/virtual-mic"
+SRC="$APP_RESOURCES/InterviewCopilotAudio.driver"
+DEST="/Library/Audio/Plug-Ins/HAL"
+
+if [ -d "$SRC" ]; then
+  mkdir -p "$DEST"
+  rm -rf "$DEST/InterviewCopilotAudio.driver"
+  cp -R "$SRC" "$DEST/"
+  chown -R root:wheel "$DEST/InterviewCopilotAudio.driver"
+  killall coreaudiod || true
+fi
+
+exit 0
