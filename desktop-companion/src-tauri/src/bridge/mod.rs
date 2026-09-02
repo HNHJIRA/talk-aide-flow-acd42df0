@@ -277,6 +277,12 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 snap["type"] = json!("interpreter_output_stats");
                 let _ = local_tx.send(Message::Text(snap.to_string())).await;
             }
+            // Phase 2: branded virtual microphone health. Read-only.
+            "virtual_mic_status" => {
+                let mut snap = crate::audio::output::virtual_mic::snapshot();
+                snap["type"] = json!("virtual_mic_status");
+                let _ = local_tx.send(Message::Text(snap.to_string())).await;
+            }
             "interpreter_output_close" => {
                 state.output.close();
             }
