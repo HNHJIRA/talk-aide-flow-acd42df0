@@ -34,6 +34,7 @@ import {
 } from "@/lib/translation/interpreter-settings";
 import type { LanguageCode, TranslationSettings } from "@/lib/translation/translation-protocol";
 import type { Segment } from "@/hooks/useCopilotSession";
+import { useInterpreterOutput } from "@/hooks/useInterpreterOutput";
 
 type Input = {
   segments: Segment[];
@@ -45,6 +46,8 @@ type Input = {
   live: boolean;
   /** Meeting topic / role, improves disambiguation. */
   context?: string;
+  /** Enables the feature-flagged native interpreter output path (pairing). */
+  sessionId?: string;
 };
 
 type Job = {
@@ -69,6 +72,15 @@ export function useVoiceInterpreter(input: Input) {
   const [history, setHistory] = useState<InterpretedUtterance[]>([]);
   const [devices, setDevices] = useState<AudioOutputDevice[]>([]);
   const [deviceError, setDeviceError] = useState("");
+
+  /**
+   * Native interpreter output (feature-flagged, additive). When it is off or
+   * unavailable, everything below behaves exactly as before.
+   */
+  const output = useInterpreterOutput({
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    deviceId: "",
+  });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const queue = useRef<Job[]>([]);
@@ -248,7 +260,11 @@ export function useVoiceInterpreter(input: Input) {
         const t2 = performance.now();
         setStatus("speaking");
         try {
-          const el = await ensureAudio();
+          // OUTGOING voice prefers the native output layer; incoming voice is
+          // for the candidate's own headphones and stays on browser playback.
+          const routedNatively =
+            job.direction === "outgoing" ? await output.speak(audio.audio) : false;
+          const el = routedNatively ? null : await ensureAudio();
           if (el) {
             el.src = `data:${audio.mimeType};base64,${audio.audio}`;
             await el.play();
@@ -288,7 +304,7 @@ export function useVoiceInterpreter(input: Input) {
     } finally {
       running.current = false;
     }
-  }, [active, ensureAudio, input.context, input.translation.provider, settings]);
+  }, [active, ensureAudio, input.context, input.translation.provider, output, settings]);
 
   /** Queue newly finalized lines. Interims are never interpreted (they change). */
   useEffect(() => {
@@ -467,5 +483,6 @@ export function useVoiceInterpreter(input: Input) {
     outgoingTarget,
     incomingTarget,
     diagnostics,
+    output,
   };
 }
