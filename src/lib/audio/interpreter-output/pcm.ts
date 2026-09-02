@@ -32,7 +32,7 @@ export function toMono16k(buffer: AudioBuffer, targetRate = INTERPRETER_OUTPUT_S
   const mono = new Float32Array(frames);
   for (let c = 0; c < channels; c += 1) {
     const data = buffer.getChannelData(c);
-    for (let i = 0; i < frames; i += 1) mono[i] += data[i]! / channels;
+    for (let i = 0; i < frames; i += 1) mono[i] = (mono[i] ?? 0) + (data[i] ?? 0) / channels;
   }
   if (buffer.sampleRate === targetRate) return mono;
 
