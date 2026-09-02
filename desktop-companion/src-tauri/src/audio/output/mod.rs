@@ -1,22 +1,33 @@
-//! Audio OUTPUT routing (Voice Interpreter Mode).
+//! Interpreter audio OUTPUT routing (Voice Interpreter Mode).
 //!
 //! Strictly separate from capture: nothing in this module touches WASAPI
-//! loopback or ScreenCaptureKit. Capture stays exactly as it was.
+//! loopback or ScreenCaptureKit, and it shares no state with them.
 //!
-//! Architecture mirrors the capture side:
+//! Architecture:
 //!   * one trait (`AudioOutputRouter`) with per-platform implementations,
-//!   * all platform/COM objects live on a single dedicated worker thread and
-//!     are never sent across threads (no `unsafe impl Send/Sync` anywhere),
-//!   * the bridge only ever pushes owned PCM buffers into a bounded channel.
+//!   * every platform/COM object is created inside the dedicated
+//!     `ic-audio-output` worker thread and never crosses a thread boundary
+//!     (no `unsafe impl Send/Sync` anywhere),
+//!   * the bridge only pushes owned PCM buffers into a bounded channel,
+//!   * a jitter buffer + linear resampler sit between the network cadence and
+//!     the device clock, with underrun protection and drop accounting.
 //!
-//! The browser produces the interpreted voice (translate -> TTS) and streams
-//! 16 kHz mono little-endian PCM down the existing bridge; this module renders
-//! it to the selected output device so the meeting app picks it up as a
-//! microphone (a virtual audio device such as VB-CABLE / BlackHole).
+//! The browser produces the interpreted voice (translate -> TTS), decodes it
+//! to 16 kHz mono PCM16 and streams it as *binary* WebSocket frames; this
+//! module renders it to the selected output device.
+
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde::Serialize;
+use serde_json::{json, Value};
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub mod render;
 
 #[cfg(target_os = "windows")]
 pub mod wasapi_virtual_mic;
@@ -59,6 +70,59 @@ pub enum OutputState {
     Unavailable,
 }
 
+/// Live counters for the "Interpreter Output Diagnostics" panel. Deliberately
+/// separate from the meeting/capture counters — these two must never mix.
+#[derive(Default)]
+pub struct OutputStats {
+    pub open: AtomicBool,
+    pub sample_rate_in: AtomicU32,
+    pub sample_rate_out: AtomicU32,
+    pub buffer_frames: AtomicU32,
+    pub buffered_ms: AtomicU32,
+    pub frames_in: AtomicU64,
+    pub frames_out: AtomicU64,
+    pub dropped_frames: AtomicU64,
+    pub underruns: AtomicU64,
+    pub latency_ms: AtomicU32,
+    pub device: RwLock<String>,
+    pub last_error: RwLock<String>,
+}
+
+impl OutputStats {
+    pub fn snapshot(&self) -> Value {
+        json!({
+            "backend": backend_name(),
+            "open": self.open.load(Ordering::Relaxed),
+            "device": self.device.read().clone(),
+            "sampleRateIn": self.sample_rate_in.load(Ordering::Relaxed),
+            "sampleRateOut": self.sample_rate_out.load(Ordering::Relaxed),
+            "bufferFrames": self.buffer_frames.load(Ordering::Relaxed),
+            "bufferedMs": self.buffered_ms.load(Ordering::Relaxed),
+            "framesIn": self.frames_in.load(Ordering::Relaxed),
+            "framesOut": self.frames_out.load(Ordering::Relaxed),
+            "droppedFrames": self.dropped_frames.load(Ordering::Relaxed),
+            "underruns": self.underruns.load(Ordering::Relaxed),
+            "latencyMs": self.latency_ms.load(Ordering::Relaxed),
+            "lastError": self.last_error.read().clone(),
+        })
+    }
+
+    pub fn reset(&self) {
+        self.frames_in.store(0, Ordering::Relaxed);
+        self.frames_out.store(0, Ordering::Relaxed);
+        self.dropped_frames.store(0, Ordering::Relaxed);
+        self.underruns.store(0, Ordering::Relaxed);
+        self.buffered_ms.store(0, Ordering::Relaxed);
+        *self.last_error.write() = String::new();
+    }
+}
+
+pub static OUTPUT_STATS: Lazy<Arc<OutputStats>> = Lazy::new(|| Arc::new(OutputStats::default()));
+
+pub fn stats() -> Arc<OutputStats> {
+    OUTPUT_STATS.clone()
+}
+
 /// Per-platform output backend. Implementations are constructed *on* the
 /// worker thread and never leave it.
 pub trait AudioOutputRouter {
@@ -66,7 +130,7 @@ pub trait AudioOutputRouter {
     fn enumerate_devices(&self) -> Vec<OutputDevice>;
     /// Bind the router to a device id (empty string = system default).
     fn open(&mut self, device_id: &str, sample_rate: u32) -> Result<()>;
-    /// Render one buffer of mono f32 samples at the opened sample rate.
+    /// Render one buffer of mono f32 samples at the opened input sample rate.
     fn write(&mut self, samples: &[f32]) -> Result<()>;
     fn close(&mut self);
 }
@@ -93,10 +157,18 @@ impl OutputHandle {
         });
     }
 
-    /// Non-blocking: a full queue drops the oldest speech rather than stalling
+    /// Non-blocking: a full queue drops the newest speech rather than stalling
     /// the bridge (an interpreter that lags behind is worse than one that skips).
     pub fn write(&self, samples: Vec<f32>) {
-        let _ = self.tx.try_send(OutputCommand::Pcm(samples));
+        let len = samples.len() as u64;
+        if self.tx.try_send(OutputCommand::Pcm(samples)).is_err() {
+            OUTPUT_STATS.dropped_frames.fetch_add(len, Ordering::Relaxed);
+        }
+    }
+
+    /// Binary wire format from the browser: 16-bit little-endian mono PCM.
+    pub fn write_pcm16(&self, bytes: &[u8]) {
+        self.write(linear16_to_f32(bytes));
     }
 
     pub fn close(&self) {
@@ -126,11 +198,11 @@ fn make_router() -> Box<dyn AudioOutputRouter> {
 pub fn backend_name() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "wasapi-virtual-mic"
+        "wasapi-render"
     }
     #[cfg(target_os = "macos")]
     {
-        "coreaudio-virtual-mic"
+        "coreaudio-render"
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -145,33 +217,50 @@ pub fn enumerate_devices() -> Vec<OutputDevice> {
 
 /// Spawn the output worker. The returned handle is the ONLY way in.
 pub fn spawn() -> OutputHandle {
-    let (tx, rx): (Sender<OutputCommand>, Receiver<OutputCommand>) = bounded(256);
+    let (tx, rx): (Sender<OutputCommand>, Receiver<OutputCommand>) = bounded(512);
     std::thread::Builder::new()
         .name("ic-audio-output".into())
         .spawn(move || {
             // Constructed here so every platform/COM object stays on this thread.
             let mut router = make_router();
-            tracing::info!(backend = router.backend_name(), "output router thread started");
+            tracing::info!(backend = router.backend_name(), "interpreter output thread started");
             while let Ok(cmd) = rx.recv() {
                 match cmd {
                     OutputCommand::Open { device_id, sample_rate } => {
-                        if let Err(err) = router.open(&device_id, sample_rate) {
-                            tracing::warn!(error = %err, device = %device_id, "output open failed");
+                        OUTPUT_STATS.reset();
+                        OUTPUT_STATS.sample_rate_in.store(sample_rate, Ordering::Relaxed);
+                        match router.open(&device_id, sample_rate) {
+                            Ok(()) => {
+                                OUTPUT_STATS.open.store(true, Ordering::Relaxed);
+                            }
+                            Err(err) => {
+                                OUTPUT_STATS.open.store(false, Ordering::Relaxed);
+                                *OUTPUT_STATS.last_error.write() = err.to_string();
+                                tracing::warn!(error = %err, device = %device_id, "interpreter output open failed");
+                            }
                         }
                     }
                     OutputCommand::Pcm(samples) => {
+                        OUTPUT_STATS
+                            .frames_in
+                            .fetch_add(samples.len() as u64, Ordering::Relaxed);
                         if let Err(err) = router.write(&samples) {
-                            tracing::warn!(error = %err, "output write failed");
+                            *OUTPUT_STATS.last_error.write() = err.to_string();
+                            tracing::warn!(error = %err, "interpreter output write failed");
                         }
                     }
-                    OutputCommand::Close => router.close(),
+                    OutputCommand::Close => {
+                        router.close();
+                        OUTPUT_STATS.open.store(false, Ordering::Relaxed);
+                    }
                     OutputCommand::Shutdown => {
                         router.close();
+                        OUTPUT_STATS.open.store(false, Ordering::Relaxed);
                         break;
                     }
                 }
             }
-            tracing::info!("output router thread exiting");
+            tracing::info!("interpreter output thread exiting");
         })
         .ok();
     OutputHandle { tx }
@@ -183,6 +272,26 @@ pub fn linear16_to_f32(bytes: &[u8]) -> Vec<f32> {
         .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
         .collect()
+}
+
+/// Linear resampler used by the render path. Cheap and allocation-light; the
+/// interpreter voice is speech, so linear interpolation is inaudible here.
+pub fn resample_linear(input: &[f32], from: u32, to: u32) -> Vec<f32> {
+    if from == to || input.is_empty() || from == 0 || to == 0 {
+        return input.to_vec();
+    }
+    let ratio = to as f64 / from as f64;
+    let out_len = ((input.len() as f64) * ratio).round() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src = i as f64 / ratio;
+        let idx = src.floor() as usize;
+        let frac = (src - idx as f64) as f32;
+        let a = *input.get(idx).unwrap_or(&0.0);
+        let b = *input.get(idx + 1).unwrap_or(&a);
+        out.push(a + (b - a) * frac);
+    }
+    out
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -197,7 +306,7 @@ impl AudioOutputRouter for UnsupportedOutputRouter {
         Vec::new()
     }
     fn open(&mut self, _device_id: &str, _sample_rate: u32) -> Result<()> {
-        anyhow::bail!("Audio output routing is only supported on Windows and macOS.")
+        anyhow::bail!("Interpreter audio output is only supported on Windows and macOS.")
     }
     fn write(&mut self, _samples: &[f32]) -> Result<()> {
         Ok(())
@@ -224,6 +333,14 @@ mod tests {
         assert_eq!(samples.len(), 2);
         assert!((samples[0]).abs() < f32::EPSILON);
         assert!((samples[1] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn resampling_scales_length() {
+        let input = vec![0.0f32; 160];
+        let out = resample_linear(&input, 16_000, 48_000);
+        assert_eq!(out.len(), 480);
+        assert_eq!(resample_linear(&input, 16_000, 16_000).len(), 160);
     }
 
     /// The handle must be a pure channel wrapper so no device object can leak
