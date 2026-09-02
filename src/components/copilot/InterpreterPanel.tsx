@@ -31,6 +31,8 @@ import {
   type LanguageCode,
 } from "@/lib/translation/translation-protocol";
 import type { AudioOutputDevice } from "@/hooks/useVoiceInterpreter";
+import { InterpreterOutputDiagnostics } from "@/components/copilot/InterpreterOutputDiagnostics";
+import type { InterpreterOutputController } from "@/hooks/useInterpreterOutput";
 
 type Props = {
   settings: InterpreterSettings;
@@ -47,6 +49,8 @@ type Props = {
   onRefreshDevices: () => void;
   onRequestDevicePermission: () => void;
   onTestVoice: () => void;
+  /** Native interpreter output layer (feature-flagged, additive). */
+  output: InterpreterOutputController;
 };
 
 const STATUS_TEXT: Record<InterpreterStatus, string> = {
@@ -72,6 +76,7 @@ export function InterpreterPanel({
   onRefreshDevices,
   onRequestDevicePermission,
   onTestVoice,
+  output,
 }: Props) {
   return (
     <section className="panel flex min-h-0 flex-col gap-4 p-5">
@@ -298,6 +303,8 @@ export function InterpreterPanel({
             <Metric label="Microphone" value={micConnected ? "Connected" : "Not connected"} />
             <Metric label="Virtual microphone" value={diagnostics.virtualMic} />
           </dl>
+
+          <InterpreterOutputDiagnostics output={output} />
         </>
       )}
     </section>
