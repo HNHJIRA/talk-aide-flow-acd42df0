@@ -130,6 +130,14 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
     });
 
     while let Some(Ok(msg)) = receiver.next().await {
+        // Binary frames are interpreter OUTPUT audio only (PCM16 LE mono).
+        // Meeting capture never sends browser -> companion binary.
+        if let Message::Binary(bytes) = msg {
+            if authed {
+                state.output.write_pcm16(&bytes);
+            }
+            continue;
+        }
         let Message::Text(text) = msg else {
             if matches!(msg, Message::Close(_)) {
                 break;
@@ -254,6 +262,20 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                         arr.iter().filter_map(|v| v.as_f64()).map(|v| v as f32).collect();
                     state.output.write(samples);
                 }
+            }
+            "interpreter_output_devices" => {
+                let devices = crate::audio::output::enumerate_devices();
+                let _ = local_tx
+                    .send(Message::Text(
+                        json!({ "type": "interpreter_output_devices", "devices": devices })
+                            .to_string(),
+                    ))
+                    .await;
+            }
+            "interpreter_output_stats" => {
+                let mut snap = crate::audio::output::stats().snapshot();
+                snap["type"] = json!("interpreter_output_stats");
+                let _ = local_tx.send(Message::Text(snap.to_string())).await;
             }
             "interpreter_output_close" => {
                 state.output.close();

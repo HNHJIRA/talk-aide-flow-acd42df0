@@ -24,6 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 rubato = "0.15"
+cpal = "0.15"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 sysinfo = "0.30"
