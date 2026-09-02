@@ -124,6 +124,9 @@ function VirtualMicBlock({ output }: { output: InterpreterOutputController }) {
         <Metric label="Audio level" value={`${levelPct}%`} />
         <Metric label="Latency" value={`${vm.latencyMs} ms`} />
         <Metric label="Dropped frames" value={String(vm.droppedFrames)} />
+        <Metric label="Sample rate" value={vm.sampleRate ? `${vm.sampleRate} Hz` : "—"} />
+        <Metric label="Buffer size" value={vm.bufferFrames ? `${vm.bufferFrames} frames` : "—"} />
+        <Metric label="Underruns" value={String(vm.underruns)} />
         <Metric label="Platform" value={vm.platform} />
       </div>
 

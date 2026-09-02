@@ -206,6 +206,9 @@ pub fn snapshot() -> Value {
         "framesRendered": s.frames_rendered.load(Ordering::Relaxed),
         "droppedFrames": super::OUTPUT_STATS.dropped_frames.load(Ordering::Relaxed),
         "latencyMs": super::OUTPUT_STATS.latency_ms.load(Ordering::Relaxed),
+        "sampleRate": super::OUTPUT_STATS.sample_rate_out.load(Ordering::Relaxed),
+        "bufferFrames": super::OUTPUT_STATS.buffer_frames.load(Ordering::Relaxed),
+        "underruns": super::OUTPUT_STATS.underruns.load(Ordering::Relaxed),
         "consumer": s.consumer.read().clone(),
         "note": s.note.read().clone(),
     })
