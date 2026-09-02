@@ -213,6 +213,7 @@ function LiveSession() {
 
   /* Voice Interpreter Mode: additive speech layer on top of translation. */
   const interpreter = useVoiceInterpreter({
+    sessionId,
     segments,
     translation: translation.settings,
     detectedLanguage: translation.detectedLanguage,
@@ -370,6 +371,7 @@ function LiveSession() {
               patch={interpreter.patch}
               status={interpreter.status}
               diagnostics={interpreter.diagnostics}
+              output={interpreter.output}
               devices={interpreter.devices}
               routing={interpreter.routing}
               latest={interpreter.latest}
