@@ -35,6 +35,9 @@ pub mod wasapi_virtual_mic;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_virtual_mic;
 
+/// Branded InterviewCopilot Virtual Microphone (detection + routing target).
+pub mod virtual_mic;
+
 /// An output device the interpreted voice can be rendered to.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OutputDevice {
@@ -229,7 +232,8 @@ pub fn spawn() -> OutputHandle {
                     OutputCommand::Open { device_id, sample_rate } => {
                         OUTPUT_STATS.reset();
                         OUTPUT_STATS.sample_rate_in.store(sample_rate, Ordering::Relaxed);
-                        match router.open(&device_id, sample_rate) {
+                        let resolved = virtual_mic::resolve_device_id(&device_id);
+                        match router.open(&resolved, sample_rate) {
                             Ok(()) => {
                                 OUTPUT_STATS.open.store(true, Ordering::Relaxed);
                             }
@@ -244,6 +248,7 @@ pub fn spawn() -> OutputHandle {
                         OUTPUT_STATS
                             .frames_in
                             .fetch_add(samples.len() as u64, Ordering::Relaxed);
+                        virtual_mic::note_level(&samples);
                         if let Err(err) = router.write(&samples) {
                             *OUTPUT_STATS.last_error.write() = err.to_string();
                             tracing::warn!(error = %err, "interpreter output write failed");
