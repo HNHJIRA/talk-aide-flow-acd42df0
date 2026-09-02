@@ -68,6 +68,9 @@ export type VirtualMicStatus = {
   framesRendered: number;
   droppedFrames: number;
   latencyMs: number;
+  sampleRate: number;
+  bufferFrames: number;
+  underruns: number;
   consumer: string;
   note: string;
 };
@@ -84,6 +87,9 @@ export const EMPTY_VIRTUAL_MIC: VirtualMicStatus = {
   framesRendered: 0,
   droppedFrames: 0,
   latencyMs: 0,
+  sampleRate: 0,
+  bufferFrames: 0,
+  underruns: 0,
   consumer: "",
   note: "",
 };

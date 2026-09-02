@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>InterviewCopilotAudio</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.interviewcopilot.virtualmic</string>
+	<key>CFBundleName</key>
+	<string>InterviewCopilot Virtual Microphone</string>
+	<key>CFBundleDisplayName</key>
+	<string>InterviewCopilot Virtual Microphone</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>InterviewCopilot</string>
+	<key>CFPlugInFactories</key>
+	<dict>
+		<!-- Factory UUID -> C factory symbol exported by the binary. -->
+		<key>9C1B2E7A-5F3D-4C08-9B2E-7A1D4E6F0C31</key>
+		<string>ICA_Create</string>
+	</dict>
+	<key>CFPlugInTypes</key>
+	<dict>
+		<!-- kAudioServerPlugInTypeUUID -> our factory UUID. -->
+		<key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+		<array>
+			<string>9C1B2E7A-5F3D-4C08-9B2E-7A1D4E6F0C31</string>
+		</array>
+	</dict>
+</dict>
+</plist>
