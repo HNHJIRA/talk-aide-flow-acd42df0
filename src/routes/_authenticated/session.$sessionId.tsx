@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
   AudioLines,
+  MonitorPlay,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,9 @@ import { TranslationBar } from "@/components/copilot/TranslationBar";
 import { languageLabel } from "@/lib/translation/translation-protocol";
 import { useVoiceInterpreter } from "@/hooks/useVoiceInterpreter";
 import { InterpreterPanel } from "@/components/copilot/InterpreterPanel";
+import { useScreenCapture } from "@/hooks/useScreenCapture";
+import { ScreenCapturePanel } from "@/components/copilot/screen/ScreenCapturePanel";
+import { SCREEN_STATE_LABEL, formatClock } from "@/lib/screen/screenshot";
 
 import {
   useCopilotSession,
@@ -223,6 +227,10 @@ function LiveSession() {
   });
   const [showInterpreter, setShowInterpreter] = useState(false);
 
+  /* Screen Intelligence (Phase 1) — isolated visual capture, no AI vision yet. */
+  const screen = useScreenCapture();
+  const [showScreen, setShowScreen] = useState(false);
+
   const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
   /** Any platform whose interviewer audio comes from the native companion. */
@@ -329,6 +337,18 @@ function LiveSession() {
               <span className="ml-1 size-1.5 rounded-full bg-success" />
             ) : null}
           </Button>
+          <Button
+            size="sm"
+            variant={showScreen ? "default" : "outline"}
+            className="h-7 gap-1 text-[11px]"
+            onClick={() => setShowScreen((v) => !v)}
+          >
+            <MonitorPlay className="size-3.5" />
+            Screen
+            {screen.sharing ? (
+              <span className="ml-1 size-1.5 rounded-full bg-success" />
+            ) : null}
+          </Button>
           <span className="font-mono text-sm tabular-nums">{formatDuration(elapsed)}</span>
         </div>
       </header>
@@ -364,6 +384,11 @@ function LiveSession() {
             : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]",
         )}
       >
+        {showScreen ? (
+          <div className="order-4 min-h-0 overflow-y-auto lg:order-4">
+            <ScreenCapturePanel screen={screen} />
+          </div>
+        ) : null}
         {showInterpreter ? (
           <div className="order-3 min-h-0 overflow-y-auto lg:order-3">
             <InterpreterPanel
@@ -630,6 +655,15 @@ function LiveSession() {
               ["Interpreter virtual mic", interpreter.diagnostics.virtualMic],
               ["Interpreter echo blocks", String(interpreter.diagnostics.echoGuardBlocks)],
               ["Interpreter error", interpreter.diagnostics.lastError],
+              ["Screen capture", SCREEN_STATE_LABEL[screen.state]],
+              ["Screen source", screen.sourceLabel || "—"],
+              ["Screen auto interval", `${screen.intervalSeconds}s`],
+              [
+                "Screenshots (kept / taken / failed)",
+                `${screen.screenshots.length} / ${screen.totalCaptures} / ${screen.failedCaptures}`,
+              ],
+              ["Last screenshot", screen.lastCaptureAt ? formatClock(screen.lastCaptureAt) : "—"],
+              ["Screen capture error", screen.error || "—"],
               ["Mic level", `${Math.round(micLevel * 100)}%`],
               ["Meeting level", `${Math.round(meetingLevel * 100)}%`],
               ["Mic track", `${debug.micTrack} · ${debug.micTrackLabel}`],
