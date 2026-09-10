@@ -800,6 +800,20 @@ function LiveSession() {
               ],
               ["Rolling summary updated", debug.rollingSummaryUpdated],
 
+              [
+                "MEETING AUDIO pipeline",
+                companionCapture
+                  ? companionAudioFlowing
+                    ? `working — native companion (${desktopAppLabel})`
+                    : "not receiving audio yet — native companion"
+                  : meetingStatus === "active"
+                    ? "working — browser tab audio"
+                    : "not connected",
+              ],
+              [
+                "SCREEN pipeline (separate, video-only)",
+                screen.sharing ? "working — screen sharing active" : "not sharing",
+              ],
               ["Companion state", debug.companionState],
               ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
               ["Companion capture backend", debug.companionBackend],
