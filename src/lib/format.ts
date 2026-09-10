@@ -20,7 +20,7 @@ export function formatBytes(bytes: number | null | undefined): string {
 }
 
 export const PLATFORM_LABELS: Record<string, string> = {
-  google_meet: "Google Meet",
+  google_meet: "Google Meet (Chrome)",
   zoom_web: "Zoom Web",
   zoom_desktop: "Zoom Desktop",
   teams_web: "Microsoft Teams Web",
