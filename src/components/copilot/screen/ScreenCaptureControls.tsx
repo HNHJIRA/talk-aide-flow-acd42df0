@@ -17,7 +17,7 @@ export function ScreenCaptureControls({ screen }: { screen: ScreenCaptureControl
             onClick={() => void screen.start()}
           >
             <MonitorUp className="size-3.5" />
-            {screen.state === "requesting" ? "Waiting…" : "Start screen sharing"}
+            {screen.state === "requesting" ? "Waiting…" : "Share Screen"}
           </Button>
         ) : (
           <>
@@ -27,7 +27,7 @@ export function ScreenCaptureControls({ screen }: { screen: ScreenCaptureControl
               className="h-7 gap-1 text-[11px]"
               onClick={screen.captureNow}
             >
-              <Camera className="size-3.5" /> Capture now
+              <Camera className="size-3.5" /> Capture screenshot
             </Button>
             <Button
               size="sm"

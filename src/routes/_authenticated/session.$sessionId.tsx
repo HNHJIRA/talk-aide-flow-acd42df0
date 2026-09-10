@@ -143,6 +143,8 @@ function LiveSession() {
     autoAssignFirstSpeaker,
     remoteRoutingMode,
     autoFallbackAllRemote,
+    // Google Meet audio is companion-only: no Chrome tab sharing, no banner.
+    browserMeetingAudio: session?.meeting_platform !== "google_meet",
     ...(answerLang ? { answerLanguage: answerLang } : {}),
   });
 
@@ -166,6 +168,7 @@ function LiveSession() {
 
     companionHealth,
     companionState,
+    companionAudioFlowing,
     connectMicrophone,
     connectMeetingAudio,
     refreshCompanion,
@@ -256,7 +259,7 @@ function LiveSession() {
       : ("zoom" as const);
   const [forceTabFallback, setForceTabFallback] = useState(false);
   /** Companion-native platforms never ask Chrome to share the meeting tab. */
-  const companionCapture = isDesktopCompanion && !forceTabFallback;
+  const companionCapture = isDesktopCompanion && (isGoogleMeet || !forceTabFallback);
   const needsMeetingAudio =
     session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
@@ -797,6 +800,20 @@ function LiveSession() {
               ],
               ["Rolling summary updated", debug.rollingSummaryUpdated],
 
+              [
+                "MEETING AUDIO pipeline",
+                companionCapture
+                  ? companionAudioFlowing
+                    ? `working — native companion (${desktopAppLabel})`
+                    : "not receiving audio yet — native companion"
+                  : meetingStatus === "active"
+                    ? "working — browser tab audio"
+                    : "not connected",
+              ],
+              [
+                "SCREEN pipeline (separate, video-only)",
+                screen.sharing ? "working — screen sharing active" : "not sharing",
+              ],
               ["Companion state", debug.companionState],
               ["Companion version / OS", `${debug.companionVersion} · ${debug.companionOs}`],
               ["Companion capture backend", debug.companionBackend],
@@ -862,7 +879,9 @@ function LiveSession() {
               title={desktopAppLabel}
               state={
                 companionState === "capturing"
-                  ? "connected"
+                  ? companionAudioFlowing
+                    ? "connected"
+                    : "connecting"
                   : companionState === "silent"
                     ? "warning"
                     : companionState === "error"
@@ -875,9 +894,11 @@ function LiveSession() {
               }
               statusLabel={
                 companionState === "capturing"
-                  ? isGoogleMeet
-                    ? "Google Meet audio capturing"
-                    : `Capturing ${desktopShortLabel} audio`
+                  ? !companionAudioFlowing
+                    ? "Starting capture — no audio frames yet"
+                    : isGoogleMeet
+                      ? "Google Meet audio capturing"
+                      : `Capturing ${desktopShortLabel} audio`
                   : companionState === "connected" ||
                       companionState === "ready" ||
                       companionState === "stopped"
@@ -888,8 +909,8 @@ function LiveSession() {
               }
               meta={
                 companionHealth
-                  ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
-                  : null
+                  ? `Captured by Desktop Companion • ${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
+                  : "Captured by Desktop Companion"
               }
               level={meetingLevel}
               action={
@@ -1035,7 +1056,7 @@ function LiveSession() {
             }
           />
 
-          {isDesktopCompanion ? (
+          {isDesktopCompanion && !isGoogleMeet ? (
             <div
               role="tablist"
               aria-label="Meeting source"
