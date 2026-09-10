@@ -143,6 +143,8 @@ function LiveSession() {
     autoAssignFirstSpeaker,
     remoteRoutingMode,
     autoFallbackAllRemote,
+    // Google Meet audio is companion-only: no Chrome tab sharing, no banner.
+    browserMeetingAudio: session?.meeting_platform !== "google_meet",
     ...(answerLang ? { answerLanguage: answerLang } : {}),
   });
 
@@ -256,7 +258,7 @@ function LiveSession() {
       : ("zoom" as const);
   const [forceTabFallback, setForceTabFallback] = useState(false);
   /** Companion-native platforms never ask Chrome to share the meeting tab. */
-  const companionCapture = isDesktopCompanion && !forceTabFallback;
+  const companionCapture = isDesktopCompanion && (isGoogleMeet || !forceTabFallback);
   const needsMeetingAudio =
     session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
@@ -1035,7 +1037,7 @@ function LiveSession() {
             }
           />
 
-          {isDesktopCompanion ? (
+          {isDesktopCompanion && !isGoogleMeet ? (
             <div
               role="tablist"
               aria-label="Meeting source"
