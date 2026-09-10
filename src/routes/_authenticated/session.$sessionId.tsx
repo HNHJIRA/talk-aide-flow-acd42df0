@@ -278,7 +278,7 @@ function LiveSession() {
     generating: questions.some((q) => q.status === "generating"),
     elapsed,
     source:
-      isDesktopCompanion && !forceTabFallback
+      companionCapture
         ? desktopAppLabel
         : meetingStatus === "active"
           ? "Meeting tab"
@@ -849,7 +849,7 @@ function LiveSession() {
       <div className="sticky bottom-0 z-20 border-t border-border bg-background/85 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70">
         <div className="flex flex-wrap items-center gap-3">
           {/* interviewer source */}
-          {isDesktopCompanion && !forceTabFallback ? (
+          {companionCapture ? (
             <DockSource
               icon={Laptop}
               title={desktopAppLabel}
@@ -866,7 +866,19 @@ function LiveSession() {
                         ? "connecting"
                         : "disconnected"
               }
-              statusLabel={COMPANION_STATUS[companionState] ?? "Not connected"}
+              statusLabel={
+                companionState === "capturing"
+                  ? isGoogleMeet
+                    ? "Google Meet audio capturing"
+                    : `Capturing ${desktopShortLabel} audio`
+                  : companionState === "connected" ||
+                      companionState === "ready" ||
+                      companionState === "stopped"
+                    ? isGoogleMeet
+                      ? "Google Meet audio ready — capture stopped"
+                      : "Companion paired — capture stopped"
+                    : (COMPANION_STATUS[companionState] ?? "Companion disconnected")
+              }
               meta={
                 companionHealth
                   ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
@@ -941,7 +953,7 @@ function LiveSession() {
 
           {needsMeetingAudio &&
           meetingStatus !== "active" &&
-          !(isDesktopCompanion && !forceTabFallback) ? (
+          !companionCapture ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button
