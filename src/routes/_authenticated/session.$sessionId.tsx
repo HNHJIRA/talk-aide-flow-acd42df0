@@ -886,6 +886,24 @@ function LiveSession() {
               }
               level={meetingLevel}
               action={
+                <div className="flex items-center gap-1.5">
+                  {companionState === "capturing" || companionState === "silent" ? (
+                    <Button size="sm" variant="outline" onClick={stopCompanionCapture}>
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={startCompanionCapture}
+                      disabled={
+                        companionState === "not_installed" ||
+                        companionState === "disconnected" ||
+                        companionState === "pairing"
+                      }
+                    >
+                      Start meeting audio
+                    </Button>
+                  )}
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button size="sm" variant="outline">
@@ -905,9 +923,11 @@ function LiveSession() {
                       onStartCapture={startCompanionCapture}
                       onStopCapture={stopCompanionCapture}
                       onFallback={() => setForceTabFallback(true)}
+                      showTabFallback={!isGoogleMeet}
                     />
                   </PopoverContent>
                 </Popover>
+                </div>
               }
             />
           ) : (
