@@ -53,12 +53,27 @@ export type CompanionFormat = {
   sourceDetected: boolean;
 };
 
+/** Native capture targets the bridge understands. */
+export type CompanionCaptureTarget = "zoom" | "teams" | "meet" | "system";
+
+/** Proof-of-flow counters emitted by the companion while capturing. */
+export type CompanionStats = {
+  framesCaptured: number;
+  packetsSent: number;
+  bytesSent: number;
+  bufferDrops: number;
+  nativeSampleRate: number;
+  nativeChannels: number;
+};
+
 type Handlers = {
   onState: (state: CompanionState, detail?: string) => void;
   onLevel: (level: number) => void;
   onPcm: (chunk: ArrayBuffer) => void;
   onFormat: (format: CompanionFormat) => void;
+  onStats?: (stats: CompanionStats) => void;
 };
+
 
 /** Probe the local bridge. Returns null when the companion is not running. */
 export async function detectCompanion(timeoutMs = 1200): Promise<CompanionHealth | null> {
@@ -95,7 +110,7 @@ export class CompanionBridge {
   constructor(
     private readonly port: number,
     private readonly token: string,
-    private readonly target: "zoom" | "teams" | "system",
+    private readonly target: CompanionCaptureTarget,
     private readonly handlers: Handlers,
   ) {}
 
@@ -172,6 +187,18 @@ export class CompanionBridge {
           this.handlers.onLevel(level);
           break;
         }
+        case "capture_stats": {
+          this.handlers.onStats?.({
+            framesCaptured: Number(msg["framesCaptured"] ?? 0),
+            packetsSent: Number(msg["packetsSent"] ?? 0),
+            bytesSent: Number(msg["bytesSent"] ?? 0),
+            bufferDrops: Number(msg["bufferDrops"] ?? 0),
+            nativeSampleRate: Number(msg["nativeSampleRate"] ?? 0),
+            nativeChannels: Number(msg["nativeChannels"] ?? 0),
+          });
+          break;
+        }
+
         case "state": {
           this.setState(String(msg["state"]) as CompanionState, msg["detail"] ? String(msg["detail"]) : undefined);
           break;
@@ -236,7 +263,7 @@ export class CompanionBridge {
       if (this.state !== "capturing" && this.state !== "silent") return;
       const quietFor = Date.now() - this.lastAudibleAt;
       if (quietFor > 20000 && this.state === "capturing") {
-        this.setState("silent", "Zoom audio is not reaching InterviewCopilot.");
+        this.setState("silent", "Meeting audio is not reaching InterviewCopilot.");
       } else if (quietFor < 3000 && this.state === "silent") {
         this.setState("capturing");
       }

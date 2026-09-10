@@ -52,17 +52,18 @@ import { LatencyWaterfallPanel } from "@/components/copilot/LatencyWaterfall";
 
 const COMPANION_STATUS: Record<string, string> = {
   not_installed: "Companion not detected",
-  disconnected: "Not connected",
+  disconnected: "Companion disconnected",
   pairing: "Pairing…",
-  connected: "Paired — ready to capture",
-  requesting_permission: "Waiting for OS audio permission",
-  ready: "Ready",
-  capturing: "Connected · Interviewer",
-  silent: "Paired — no meeting audio",
+  connected: "Companion paired — capture stopped",
+  requesting_permission: "Waiting for macOS screen & system audio permission",
+  ready: "Companion paired — capture stopped",
+  capturing: "Capturing · Interviewer",
+  silent: "Paired — no meeting audio detected",
   reconnecting: "Reconnecting…",
-  error: "Companion error",
-  stopped: "Stopped",
+  error: "Capture error",
+  stopped: "Companion paired — capture stopped",
 };
+
 
 export const Route = createFileRoute("/_authenticated/session/$sessionId")({
   head: () => ({
@@ -233,15 +234,33 @@ function LiveSession() {
 
   const isTeamsDesktop = session?.meeting_platform === "teams_desktop";
   const isZoomDesktop = session?.meeting_platform === "zoom_desktop";
+  /**
+   * Google Meet runs in Chrome, but its audio is captured natively by the
+   * companion (ScreenCaptureKit on macOS / WASAPI loopback on Windows) so the
+   * Meet tab is never asked to share itself with this web app — no Chrome
+   * "Sharing this tab to…" banner.
+   */
+  const isGoogleMeet = session?.meeting_platform === "google_meet";
   /** Any platform whose interviewer audio comes from the native companion. */
-  const isDesktopCompanion = isZoomDesktop || isTeamsDesktop;
-  const desktopAppLabel = isTeamsDesktop ? "Microsoft Teams Desktop" : "Zoom Desktop";
-  const desktopShortLabel = isTeamsDesktop ? "Teams" : "Zoom";
-  const companionTarget = isTeamsDesktop ? ("teams" as const) : ("zoom" as const);
+  const isDesktopCompanion = isZoomDesktop || isTeamsDesktop || isGoogleMeet;
+  const desktopAppLabel = isTeamsDesktop
+    ? "Microsoft Teams Desktop"
+    : isGoogleMeet
+      ? "Google Meet (Chrome)"
+      : "Zoom Desktop";
+  const desktopShortLabel = isTeamsDesktop ? "Teams" : isGoogleMeet ? "Meet" : "Zoom";
+  const companionTarget = isTeamsDesktop
+    ? ("teams" as const)
+    : isGoogleMeet
+      ? ("meet" as const)
+      : ("zoom" as const);
   const [forceTabFallback, setForceTabFallback] = useState(false);
+  /** Companion-native platforms never ask Chrome to share the meeting tab. */
+  const companionCapture = isDesktopCompanion && !forceTabFallback;
   const needsMeetingAudio =
     session?.meeting_platform !== "manual" && session?.meeting_platform !== "practice";
   const canStart = micStatus === "active" || meetingStatus === "active";
+
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: 0, behavior: "smooth" });

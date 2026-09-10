@@ -160,7 +160,23 @@ fn spawn_worker(state: Shared, started: StartedCapture) {
                     let _ = state.tx.send(OutMsg::Text(
                         serde_json::json!({ "type": "level", "level": level }).to_string(),
                     ));
+                    // Proof-of-flow counters: the browser refuses to call a
+                    // capture "connected" while these stay at zero.
+                    let _ = state.tx.send(OutMsg::Text(
+                        serde_json::json!({
+                            "type": "capture_stats",
+                            "framesCaptured": state.counters.frames_captured.load(Ordering::Relaxed),
+                            "packetsSent": state.counters.packets_sent.load(Ordering::Relaxed),
+                            "bytesSent": state.counters.bytes_sent.load(Ordering::Relaxed),
+                            "bufferDrops": state.counters.buffer_drops.load(Ordering::Relaxed),
+                            "level": level,
+                            "nativeSampleRate": native_rate,
+                            "nativeChannels": channels,
+                        })
+                        .to_string(),
+                    ));
                     state.evaluate_silence();
+
 
                     if dev && last_diag.elapsed() >= Duration::from_secs(2) {
                         last_diag = Instant::now();

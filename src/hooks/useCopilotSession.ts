@@ -51,6 +51,8 @@ import {
   type CompanionFormat,
   type CompanionHealth,
   type CompanionState,
+  type CompanionStats,
+
 } from "@/lib/companion/companion-client";
 
 import {
@@ -76,14 +78,30 @@ import {
 } from "@/lib/speaker-stability";
 
 /** Every remote source (meeting tab or a desktop companion) feeds one INTERVIEWER pipeline. */
-export type SourceKind = "microphone" | "remote_meeting" | "zoom_desktop" | "teams_desktop";
+export type SourceKind =
+  | "microphone"
+  | "remote_meeting"
+  | "zoom_desktop"
+  | "teams_desktop"
+  | "meet_chrome";
 
 /** Native-companion capture targets understood by the bridge. */
-export type CompanionTarget = "zoom" | "teams" | "system";
+export type CompanionTarget = "zoom" | "teams" | "meet" | "system";
 
-/** True for any native desktop-companion capture (Zoom Desktop, Teams Desktop). */
+/** True for any native desktop-companion capture (Meet in Chrome, Zoom, Teams). */
 export const isDesktopSource = (source: SourceKind) =>
-  source === "zoom_desktop" || source === "teams_desktop";
+  source === "zoom_desktop" || source === "teams_desktop" || source === "meet_chrome";
+
+/** Companion target -> the interviewer source kind it produces. */
+export const sourceForTarget = (target: CompanionTarget): Exclude<SourceKind, "microphone"> =>
+  target === "teams"
+    ? "teams_desktop"
+    : target === "meet"
+      ? "meet_chrome"
+      : target === "system"
+        ? "zoom_desktop"
+        : "zoom_desktop";
+
 
 export type SourceStatus = "disconnected" | "connecting" | "active" | "silent" | "error";
 export type SessionState =
@@ -231,21 +249,29 @@ export type DebugInfo = {
   remoteRecording: string;
   prerecordedControl: string;
 
-  /* --- desktop companion / Zoom Desktop --- */
+  /* --- desktop companion (Google Meet / Zoom / Teams native capture) --- */
   companionState: CompanionState;
 
   companionVersion: string;
   companionOs: string;
   companionBackend: string;
+  companionTarget: string;
   remoteCaptureMethod: string;
   remoteSourceDetected: string;
   remoteSampleRate: string;
   remoteChannels: string;
   processedSampleRate: string;
+  /* proof that native audio really is flowing (never inferred from "connected") */
+  companionFramesCaptured: number;
+  companionPacketsSent: number;
+  companionBytesSent: number;
+  companionBufferDrops: number;
+  companionAudioFlowing: string;
   echoSuppressed: number;
   lastCaptureError: string;
   errors: string[];
 };
+
 
 /* ---------------- interviewer turn timing (bounded silence) ----------------
  * Stage A  0 → 350 ms      short natural pause: keep the turn open, decide a
@@ -410,7 +436,11 @@ export function useCopilotSession(opts: Options) {
   const [companionState, setCompanionState] = useState<CompanionState>("disconnected");
   const [companionLevel, setCompanionLevel] = useState(0);
   const [companionFormat, setCompanionFormat] = useState<CompanionFormat | null>(null);
+  const [companionStats, setCompanionStats] = useState<CompanionStats | null>(null);
   const companionRef = useRef<CompanionBridge | null>(null);
+  /** Which native target the current companion connection was opened for. */
+  const companionTargetRef = useRef<CompanionTarget>("zoom");
+
 
   const micStream = useRef<MediaStream | null>(null);
   const meetingStream = useRef<MediaStream | null>(null);
@@ -2270,11 +2300,11 @@ export function useCopilotSession(opts: Options) {
 
   /**
    * Attach the paired Desktop Companion. Audio only starts flowing after the user
-   * explicitly presses "Connect Zoom Desktop Audio" (startCompanionCapture).
+   * explicitly presses "Start meeting audio" (startCompanionCapture).
    */
   const connectCompanion = useCallback(
     async (bridgeToken: string, target: CompanionTarget = "zoom") => {
-      const desktopSource: SourceKind = target === "teams" ? "teams_desktop" : "zoom_desktop";
+      const desktopSource = sourceForTarget(target);
       const health = companionHealth ?? (await refreshCompanion());
       if (!health) {
         setCompanionState("not_installed");
@@ -2282,6 +2312,8 @@ export function useCopilotSession(opts: Options) {
         return false;
       }
       companionRef.current?.disconnect();
+      companionTargetRef.current = target;
+      setCompanionStats(null);
       const bridge = new CompanionBridge(health.port, bridgeToken, target, {
         onState: (state, detail) => {
           setCompanionState(state);
@@ -2300,6 +2332,7 @@ export function useCopilotSession(opts: Options) {
         },
         onLevel: (level) => setCompanionLevel(level),
         onFormat: (format) => setCompanionFormat(format),
+        onStats: (stats) => setCompanionStats(stats),
         onPcm: (chunk) => remoteStt_.current?.send(chunk),
       });
       companionRef.current = bridge;
@@ -2315,10 +2348,12 @@ export function useCopilotSession(opts: Options) {
       pushError("Pair the Desktop Companion first.");
       return;
     }
-    if (!isDesktopSource(remoteSourceRef.current)) remoteSourceRef.current = "zoom_desktop";
+    remoteSourceRef.current = sourceForTarget(companionTargetRef.current);
+    setCompanionStats(null);
     companionRef.current.startCapture();
     if (liveRef.current && !remoteStt_.current) startSttRef.current?.(remoteSourceRef.current);
   }, [pushError]);
+
 
   const stopCompanionCapture = useCallback(() => {
     companionRef.current?.stopCapture();
@@ -2379,6 +2414,8 @@ export function useCopilotSession(opts: Options) {
     companionRef.current = null;
     setCompanionState("disconnected");
     setCompanionLevel(0);
+    setCompanionStats(null);
+
     stopStream(micStream.current);
     stopStream(meetingStream.current);
     micStream.current = null;
@@ -2755,6 +2792,7 @@ export function useCopilotSession(opts: Options) {
       companionVersion: companionHealth?.version ?? "not detected",
       companionOs: companionHealth?.os ?? "unknown",
       companionBackend: companionHealth?.captureBackend ?? "unknown",
+      companionTarget: companionTargetRef.current,
       remoteCaptureMethod:
         isDesktopSource(remoteSourceRef.current)
           ? (companionFormat?.captureMethod ?? "companion (pending)")
@@ -2772,6 +2810,21 @@ export function useCopilotSession(opts: Options) {
       remoteSampleRate: String(companionFormat?.sampleRate ?? COMPANION_SAMPLE_RATE),
       remoteChannels: String(companionFormat?.channels ?? 1),
       processedSampleRate: `${COMPANION_SAMPLE_RATE} Hz mono linear16`,
+      companionFramesCaptured: companionStats?.framesCaptured ?? 0,
+      companionPacketsSent: companionStats?.packetsSent ?? 0,
+      companionBytesSent: companionStats?.bytesSent ?? 0,
+      companionBufferDrops: companionStats?.bufferDrops ?? 0,
+      companionAudioFlowing: !isDesktopSource(remoteSourceRef.current)
+        ? "n/a — browser capture"
+        : !companionStats
+          ? "no — no capture statistics yet"
+          : companionStats.framesCaptured > 0 &&
+              companionStats.packetsSent > 0 &&
+              companionStats.bytesSent > 0
+            ? companionLevel > 0
+              ? "yes — frames, packets and audio level all above zero"
+              : "frames and packets flowing, but the level is 0 (silent source)"
+            : "no — companion connected but zero frames/packets/bytes",
       echoSuppressed: counts.current.echo,
       lastCaptureError: diag.lastCaptureError,
       errors,
@@ -2789,6 +2842,8 @@ export function useCopilotSession(opts: Options) {
       companionState,
       companionHealth,
       companionFormat,
+      companionStats,
+
       meetingStatus,
       sttProfile,
       speakers,
@@ -2860,6 +2915,15 @@ export function useCopilotSession(opts: Options) {
 
     companionHealth,
     companionState,
+    companionStats,
+    /** True only when the native bridge really delivered frames + packets + bytes. */
+    companionAudioFlowing: Boolean(
+      companionStats &&
+        companionStats.framesCaptured > 0 &&
+        companionStats.packetsSent > 0 &&
+        companionStats.bytesSent > 0,
+    ),
+
     connectMicrophone,
     connectMeetingAudio,
     refreshCompanion,

@@ -73,6 +73,9 @@ pub enum CaptureTarget {
     Zoom,
     /// Prefer per-application capture of the Microsoft Teams desktop client.
     Teams,
+    /// Google Meet running in a Chrome-family browser — captured natively so
+    /// the Meet tab is never asked to share itself with the web app.
+    Meet,
     /// Capture the current system output device (loopback).
     System,
 }
@@ -82,6 +85,7 @@ impl CaptureTarget {
         match raw {
             "zoom" | "zoom_desktop" => CaptureTarget::Zoom,
             "teams" | "teams_desktop" | "microsoft_teams" => CaptureTarget::Teams,
+            "meet" | "google_meet" | "meet_chrome" | "chrome" => CaptureTarget::Meet,
             _ => CaptureTarget::System,
         }
     }
@@ -89,6 +93,7 @@ impl CaptureTarget {
         match self {
             CaptureTarget::Zoom => "zoom",
             CaptureTarget::Teams => "teams",
+            CaptureTarget::Meet => "meet",
             CaptureTarget::System => "system",
         }
     }
@@ -102,6 +107,8 @@ pub enum SourceDetection {
     ZoomRunningNoAudio,
     TeamsDetected,
     TeamsNotDetected,
+    MeetDetected,
+    MeetNotDetected,
     SystemFallback,
 }
 
@@ -113,10 +120,13 @@ impl SourceDetection {
             SourceDetection::ZoomRunningNoAudio => "zoom_running_no_audio",
             SourceDetection::TeamsDetected => "teams_detected",
             SourceDetection::TeamsNotDetected => "teams_not_detected",
+            SourceDetection::MeetDetected => "meet_detected",
+            SourceDetection::MeetNotDetected => "meet_not_detected",
             SourceDetection::SystemFallback => "system_fallback",
         }
     }
 }
+
 
 /// Format actually negotiated with the OS, plus what we emit downstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
