@@ -339,6 +339,14 @@ type Options = {
   autoAssignFirstSpeaker: boolean;
   remoteRoutingMode: RemoteRoutingMode;
   /**
+   * Hard switch for the browser tab-audio path. Google Meet sessions set this to
+   * false: their interviewer audio comes from the native companion only, so the
+   * Meet tab is never asked to share itself and Chrome shows no sharing banner.
+   * (Screen Intelligence keeps its own, separate video-only getDisplayMedia.)
+   */
+  browserMeetingAudio?: boolean;
+
+  /**
    * Optional override from the translation layer: the language code AI answers
    * must be written in. Falls back to the session's stored language.
    */
