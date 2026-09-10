@@ -2242,6 +2242,13 @@ export function useCopilotSession(opts: Options) {
   );
 
   const connectMeetingAudio = useCallback(async () => {
+    // Companion-only sessions (Google Meet) must never open a tab-sharing prompt.
+    if (optsRef.current.browserMeetingAudio === false) {
+      pushError(
+        "This session captures meeting audio with the Desktop Companion — browser tab sharing is disabled.",
+      );
+      return false;
+    }
     setMeetingStatus("connecting");
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
