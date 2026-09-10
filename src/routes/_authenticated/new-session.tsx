@@ -28,7 +28,12 @@ export const Route = createFileRoute("/_authenticated/new-session")({
 });
 
 const PLATFORMS = [
-  { value: "google_meet", label: "Google Meet", hint: "Share the Meet tab with 'Share tab audio'" },
+  {
+    value: "google_meet",
+    label: "Google Meet (Chrome)",
+    hint: "Captured natively by the Companion — no Chrome tab sharing",
+  },
+
   { value: "zoom_web", label: "Zoom Web", hint: "Join in browser, then share that tab's audio" },
   {
     value: "zoom_desktop",
