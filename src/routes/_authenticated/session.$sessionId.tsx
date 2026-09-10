@@ -168,6 +168,7 @@ function LiveSession() {
 
     companionHealth,
     companionState,
+    companionAudioFlowing,
     connectMicrophone,
     connectMeetingAudio,
     refreshCompanion,
@@ -864,7 +865,9 @@ function LiveSession() {
               title={desktopAppLabel}
               state={
                 companionState === "capturing"
-                  ? "connected"
+                  ? companionAudioFlowing
+                    ? "connected"
+                    : "connecting"
                   : companionState === "silent"
                     ? "warning"
                     : companionState === "error"
@@ -877,9 +880,11 @@ function LiveSession() {
               }
               statusLabel={
                 companionState === "capturing"
-                  ? isGoogleMeet
-                    ? "Google Meet audio capturing"
-                    : `Capturing ${desktopShortLabel} audio`
+                  ? !companionAudioFlowing
+                    ? "Starting capture — no audio frames yet"
+                    : isGoogleMeet
+                      ? "Google Meet audio capturing"
+                      : `Capturing ${desktopShortLabel} audio`
                   : companionState === "connected" ||
                       companionState === "ready" ||
                       companionState === "stopped"
@@ -890,8 +895,8 @@ function LiveSession() {
               }
               meta={
                 companionHealth
-                  ? `${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
-                  : null
+                  ? `Captured by Desktop Companion • ${companionHealth.os ?? "Desktop"} • ${companionHealth.captureBackend}`
+                  : "Captured by Desktop Companion"
               }
               level={meetingLevel}
               action={

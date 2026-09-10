@@ -29,7 +29,8 @@ export function ScreenCapturePanel({ screen }: { screen: ScreenCaptureController
             Screen capture
           </h2>
           <p className="text-[11px] text-muted-foreground">
-            Share a screen, window or tab and collect snapshots.
+            Share Screen and capture screenshots. Screen capture is separate from meeting audio —
+            the browser sharing banner only appears for this feature.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -84,8 +85,8 @@ export function ScreenCapturePanel({ screen }: { screen: ScreenCaptureController
         </>
       ) : (
         <p className="text-[11px] text-muted-foreground">
-          Turn this on to share a screen. Your meeting audio, transcript and answers keep running
-          exactly as they do now.
+          Turn this on to Share Screen and capture screenshots. Meeting audio, transcript and
+          answers are a separate pipeline and keep running exactly as they do now.
         </p>
       )}
     </section>
