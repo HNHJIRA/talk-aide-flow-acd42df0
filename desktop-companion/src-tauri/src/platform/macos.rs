@@ -76,14 +76,39 @@ fn is_teams(bundle_id: &str, name: &str) -> bool {
         || app.starts_with("microsoft teams")
 }
 
+/// Chrome-family browsers that render Google Meet audio. Meet is a web app, so
+/// the "application" we capture natively is the browser process itself — the
+/// Meet tab is never asked to share itself with the InterviewCopilot web app.
+const CHROME_BUNDLE_IDS: &[&str] = &[
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.dev",
+    "com.google.Chrome.canary",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "company.thebrowser.Browser",
+];
+
+fn is_chrome(bundle_id: &str, name: &str) -> bool {
+    let bundle = bundle_id.to_ascii_lowercase();
+    let app = name.to_ascii_lowercase();
+    CHROME_BUNDLE_IDS.iter().any(|id| id.eq_ignore_ascii_case(bundle_id))
+        || bundle.starts_with("com.google.chrome")
+        || app == "google chrome"
+        || app.starts_with("google chrome")
+        || app.starts_with("chromium")
+}
+
 /// Does this running application belong to the requested capture target?
 fn matches_target(target: CaptureTarget, bundle_id: &str, name: &str) -> bool {
     match target {
         CaptureTarget::Zoom => is_zoom(bundle_id, name),
         CaptureTarget::Teams => is_teams(bundle_id, name),
+        CaptureTarget::Meet => is_chrome(bundle_id, name),
         CaptureTarget::System => false,
     }
 }
+
 
 /// Friendly permission-aware wording for any SCShareableContent failure.
 fn shareable_error(err: &SCError) -> String {
@@ -116,7 +141,17 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
             Ok(content) => {
                 let zoom = find_app(&content, CaptureTarget::Zoom);
                 let teams = find_app(&content, CaptureTarget::Teams);
+                let chrome = find_app(&content, CaptureTarget::Meet);
                 vec![
+                    SourceInfo {
+                        id: "meet".into(),
+                        label: chrome
+                            .as_ref()
+                            .map(|c| format!("Google Meet ({})", c.name))
+                            .unwrap_or_else(|| "Google Meet (Chrome not running)".into()),
+                        kind: "application".into(),
+                        available: chrome.is_some(),
+                    },
                     SourceInfo {
                         id: "zoom".into(),
                         label: zoom
@@ -145,6 +180,12 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
             }
             Err(_) => vec![
                 SourceInfo {
+                    id: "meet".into(),
+                    label: "Google Meet (screen & system audio permission needed)".into(),
+                    kind: "application".into(),
+                    available: false,
+                },
+                SourceInfo {
                     id: "zoom".into(),
                     label: "Zoom Desktop (screen & system audio permission needed)".into(),
                     kind: "application".into(),
@@ -163,6 +204,7 @@ impl AudioCaptureBackend for ScreenCaptureKitBackend {
                     available: false,
                 },
             ],
+
         }
     }
 
@@ -357,7 +399,7 @@ fn build_stream(
     let app_target = find_app(&content, target);
 
     let (filter, probe) = match (target, &app_target) {
-        (CaptureTarget::Zoom | CaptureTarget::Teams, Some(app)) => {
+        (CaptureTarget::Zoom | CaptureTarget::Teams | CaptureTarget::Meet, Some(app)) => {
             let apps = content
                 .applications()
                 .into_iter()
@@ -371,23 +413,23 @@ fn build_stream(
             (
                 filter,
                 AppProbe {
-                    capture_target: if target == CaptureTarget::Teams {
-                        "teams_application_audio".into()
-                    } else {
-                        "zoom_application_audio".into()
+                    capture_target: match target {
+                        CaptureTarget::Teams => "teams_application_audio".into(),
+                        CaptureTarget::Meet => "meet_chrome_application_audio".into(),
+                        _ => "zoom_application_audio".into(),
                     },
                     source_process: Some(format!("{} ({})", app.name, app.bundle_id)),
                     device_name: None,
                     source_detected: true,
-                    source_detection: if target == CaptureTarget::Teams {
-                        SourceDetection::TeamsDetected
-                    } else {
-                        SourceDetection::ZoomDetected
+                    source_detection: match target {
+                        CaptureTarget::Teams => SourceDetection::TeamsDetected,
+                        CaptureTarget::Meet => SourceDetection::MeetDetected,
+                        _ => SourceDetection::ZoomDetected,
                     },
                 },
             )
         }
-        (CaptureTarget::Zoom | CaptureTarget::Teams, None) => {
+        (CaptureTarget::Zoom | CaptureTarget::Teams | CaptureTarget::Meet, None) => {
             // Honest fallback: whole-display audio, clearly labelled as such.
             let filter = SCContentFilter::create()
                 .with_display(display)
@@ -400,14 +442,15 @@ fn build_stream(
                     source_process: None,
                     device_name: None,
                     source_detected: false,
-                    source_detection: if target == CaptureTarget::Teams {
-                        SourceDetection::TeamsNotDetected
-                    } else {
-                        SourceDetection::ZoomNotDetected
+                    source_detection: match target {
+                        CaptureTarget::Teams => SourceDetection::TeamsNotDetected,
+                        CaptureTarget::Meet => SourceDetection::MeetNotDetected,
+                        _ => SourceDetection::ZoomNotDetected,
                     },
                 },
             )
         }
+
         (CaptureTarget::System, _) => {
             let filter = SCContentFilter::create()
                 .with_display(display)

@@ -54,6 +54,7 @@ export function CompanionPanel({
   onStartCapture,
   onStopCapture,
   onFallback,
+  showTabFallback = true,
   embedded = false,
 }: {
   sessionId: string;
@@ -67,6 +68,8 @@ export function CompanionPanel({
   onStartCapture: () => void;
   onStopCapture: () => void;
   onFallback: () => void;
+  /** Google Meet capture is companion-native: never offer Chrome tab sharing there. */
+  showTabFallback?: boolean;
   embedded?: boolean;
 }) {
 
@@ -166,18 +169,26 @@ export function CompanionPanel({
           </Button>
         ) : (
           <Button size="sm" onClick={onStartCapture}>
-            Connect {appLabel} audio
+            Start {appLabel} audio
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={onFallback}>
-          Use browser tab audio instead
-        </Button>
+        {showTabFallback ? (
+          <Button size="sm" variant="ghost" onClick={onFallback}>
+            Use browser tab audio instead
+          </Button>
+        ) : null}
       </div>
 
       {!health ? (
         <div className="mt-3">
           <CompanionRequiredCard onCheckAgain={() => void onRefresh()} />
         </div>
+      ) : null}
+      {state === "error" || state === "requesting_permission" ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          On macOS, allow InterviewCopilot Companion under System Settings → Privacy &amp; Security →
+          Screen &amp; System Audio Recording, then start the capture again.
+        </p>
       ) : null}
       {state === "silent" ? (
         <p className="mt-2 text-xs text-warning">

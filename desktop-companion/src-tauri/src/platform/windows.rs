@@ -34,6 +34,9 @@ pub struct AppPresence {
     pub process_name: Option<String>,
 }
 
+/// Chrome-family browsers that render Google Meet audio.
+const CHROME_PROCESS_HINTS: &[&str] = &["chrome.exe", "msedge.exe", "brave.exe", "chromium.exe"];
+
 pub fn detect_zoom() -> AppPresence {
     detect_process(ZOOM_PROCESS_HINTS, "zoom")
 }
@@ -41,6 +44,11 @@ pub fn detect_zoom() -> AppPresence {
 pub fn detect_teams() -> AppPresence {
     detect_process(TEAMS_PROCESS_HINTS, "ms-teams")
 }
+
+pub fn detect_chrome() -> AppPresence {
+    detect_process(CHROME_PROCESS_HINTS, "chrome")
+}
+
 
 fn detect_process(hints: &[&str], prefix: &str) -> AppPresence {
     let mut sys = System::new();
@@ -64,7 +72,18 @@ impl AudioCaptureBackend for WasapiBackend {
     fn enumerate_sources(&self) -> Vec<SourceInfo> {
         let zoom = detect_zoom();
         let teams = detect_teams();
+        let chrome = detect_chrome();
         vec![
+            SourceInfo {
+                id: "meet".into(),
+                label: chrome
+                    .process_name
+                    .clone()
+                    .map(|p| format!("Google Meet ({p}) — system playback capture"))
+                    .unwrap_or_else(|| "Google Meet (Chrome not running)".into()),
+                kind: "system_loopback".into(),
+                available: true,
+            },
             SourceInfo {
                 id: "zoom".into(),
                 label: zoom
@@ -99,8 +118,10 @@ impl AudioCaptureBackend for WasapiBackend {
     fn start(&self, target: CaptureTarget) -> Result<StartedCapture> {
         let zoom = detect_zoom();
         let teams = detect_teams();
+        let chrome = detect_chrome();
         let app = match target {
             CaptureTarget::Teams => &teams,
+            CaptureTarget::Meet => &chrome,
             _ => &zoom,
         };
         let (capture_method, capture_target, detection) = match target {
@@ -114,6 +135,16 @@ impl AudioCaptureBackend for WasapiBackend {
                 "WASAPI SYSTEM LOOPBACK",
                 "system",
                 SourceDetection::TeamsNotDetected,
+            ),
+            CaptureTarget::Meet if chrome.running => (
+                "WASAPI SYSTEM LOOPBACK",
+                "meet_via_system_output",
+                SourceDetection::MeetDetected,
+            ),
+            CaptureTarget::Meet => (
+                "WASAPI SYSTEM LOOPBACK",
+                "system",
+                SourceDetection::MeetNotDetected,
             ),
             CaptureTarget::Zoom if zoom.running => (
                 // Per-process capture is not yet wired; be honest about what
@@ -138,11 +169,16 @@ impl AudioCaptureBackend for WasapiBackend {
         started.capture_method = capture_method.to_string();
         started.capture_target = capture_target.to_string();
         started.source_process = app.process_name.clone();
-        started.source_detected =
-            matches!(detection, SourceDetection::ZoomDetected | SourceDetection::TeamsDetected);
+        started.source_detected = matches!(
+            detection,
+            SourceDetection::ZoomDetected
+                | SourceDetection::TeamsDetected
+                | SourceDetection::MeetDetected
+        );
         started.source_detection = detection;
         Ok(started)
     }
+
 }
 
 fn default_render_device_name() -> Option<String> {
